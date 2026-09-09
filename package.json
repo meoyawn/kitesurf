@@ -48,6 +48,7 @@
     "node": ">=24"
   },
   "patchedDependencies": {
-    "@cloudflare/playwright-mcp@0.0.5": "patches/@cloudflare+playwright-mcp@0.0.5.patch"
+    "@cloudflare/playwright-mcp@0.0.5": "patches/@cloudflare+playwright-mcp@0.0.5.patch",
+    "@cloudflare/playwright@0.0.11": "patches/@cloudflare+playwright@0.0.11.patch"
   }
 }

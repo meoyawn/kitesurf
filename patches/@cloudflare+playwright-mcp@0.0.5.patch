@@ -88,3 +88,34 @@ diff --git a/lib/esm/index.js b/lib/esm/index.js
 
 -export { createMcpAgent };
 +export { createMcpAgent, createMcpServer };
+
+diff --git a/lib/cjs/src/connection.js b/lib/cjs/src/connection.js
+--- a/lib/cjs/src/connection.js
++++ b/lib/cjs/src/connection.js
+@@ -49,7 +49,10 @@
+     try {
+       return await context$1.run(tool, request.params.arguments);
+     } catch (error) {
+-      return errorResult(String(error));
++      const result = errorResult(String(error));
++      if (error instanceof Error && error.cause?.source === "cloudflare_browser_run")
++        result.structuredContent = { cloudflareBrowserResponse: error.cause };
++      return result;
+     }
+   });
+   return new Connection(server, context$1);
+diff --git a/lib/esm/src/connection.js b/lib/esm/src/connection.js
+--- a/lib/esm/src/connection.js
++++ b/lib/esm/src/connection.js
+@@ -45,7 +45,10 @@
+     try {
+       return await context.run(tool, request.params.arguments);
+     } catch (error) {
+-      return errorResult(String(error));
++      const result = errorResult(String(error));
++      if (error instanceof Error && error.cause?.source === "cloudflare_browser_run")
++        result.structuredContent = { cloudflareBrowserResponse: error.cause };
++      return result;
+     }
+   });
+   return new Connection(server, context);
