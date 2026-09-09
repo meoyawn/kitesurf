@@ -1,12 +1,10 @@
 import { env } from "cloudflare:workers";
-import { createMcpAgent } from "@cloudflare/playwright-mcp";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { authFetch, type AuthEnv } from "./auth.ts";
+import { mcpFetch } from "./mcp.ts";
 import { boundedBody, isChatGptRedirect, json, now, SCOPE } from "./security.ts";
 
-export const PlaywrightMCP = createMcpAgent(env.BROWSER);
-
-const mcp = PlaywrightMCP.serve("/mcp", { binding: "MCP_OBJECT" });
+export { PlaywrightMCP } from "./browser.ts";
 
 const provider = new OAuthProvider<AuthEnv>({
   apiRoute: "/mcp",
@@ -19,7 +17,8 @@ const provider = new OAuthProvider<AuthEnv>({
       }
       if (!(await workerEnv.MCP_RATE_LIMIT.limit({ key: "owner" })).success) return json({ error: "Too many browser requests." }, 429, { "Retry-After": "60" });
       if (new URL(request.url).pathname !== "/mcp") return json({ error: "Not found" }, 404);
-      return mcp.fetch(request, workerEnv, ctx);
+      const browser = workerEnv.MCP_OBJECT.get(workerEnv.MCP_OBJECT.idFromName(props.userId));
+      return mcpFetch(request, browser);
     },
   },
   defaultHandler: { fetch: authFetch },

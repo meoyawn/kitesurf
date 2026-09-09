@@ -14,6 +14,7 @@ let ownerCookie = "";
 let csrf = "";
 let mcpSession = "";
 let accessToken = "";
+let browserUsed = false;
 
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(origin + path, { ...init, redirect: "manual", signal: AbortSignal.timeout(60000) });
@@ -155,16 +156,29 @@ try {
   assert.ok(listed.result?.tools.some((tool: { name: string }) => tool.name === "browser_navigate"));
   console.log(`PASS: authenticated MCP initialize and ${listed.result.tools.length} discoverable tools.`);
   if (useBrowser) {
+    browserUsed = true;
     const navigation = await rpc(3, "tools/call", { name: "browser_navigate", arguments: { url: "https://example.com" } });
     assert.ok(!navigation.error && !navigation.result?.isError, "Browser navigation failed: " + JSON.stringify(navigation));
     assert.match(JSON.stringify(navigation.result), /Example Domain/);
-    const screenshot = await rpc(4, "tools/call", { name: "browser_take_screenshot", arguments: {} });
+    const navigationText = navigation.result.content.filter((item: { type: string }) => item.type === "text")
+      .map((item: { text: string }) => item.text).join("\n");
+    const linkRef = navigationText.match(/link "[^"]+" \[ref=([^\]]+)\]/)?.[1];
+    assert.ok(linkRef, "Navigation did not return a clickable link reference.");
+    mcpSession = "";
+    await rpc(4, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "kitesurf-reconnected", version: "1.0.0" } });
+    const snapshot = await rpc(5, "tools/call", { name: "browser_snapshot", arguments: {} });
+    assert.ok(!snapshot.error && !snapshot.result?.isError, "Snapshot after reconnect failed.");
+    assert.match(JSON.stringify(snapshot.result), /Example Domain/, "MCP reconnect lost the navigated page.");
+    const click = await rpc(6, "tools/call", { name: "browser_click", arguments: { element: "Example Domain information link", ref: linkRef } });
+    assert.ok(!click.error && !click.result?.isError, "Click after reconnect failed: " + JSON.stringify(click));
+    assert.match(JSON.stringify(click.result), /iana\.org/, "Click did not follow the original page's link.");
+    const screenshot = await rpc(7, "tools/call", { name: "browser_take_screenshot", arguments: {} });
     assert.ok(screenshot.result?.content.some((item: { type: string }) => item.type === "image"), "Screenshot did not contain an image.");
-    console.log("PASS: live Cloudflare browser navigated to example.com and returned a screenshot.");
+    console.log("PASS: live browser preserved its page and link reference across MCP reconnect, followed the link, and returned a screenshot.");
   }
 } finally {
-  if (useBrowser && mcpSession) {
-    await rpc(5, "tools/call", { name: "browser_close", arguments: {} });
+  if (browserUsed) {
+    await rpc(8, "tools/call", { name: "browser_close", arguments: {} });
     console.log("Browser closed.");
   }
   if (mcpSession) await request("/mcp", { method: "DELETE", headers: { Authorization: "Bearer " + accessToken, "Mcp-Session-Id": mcpSession } });
