@@ -16,9 +16,7 @@
   },
   "dependencies": {
     "@cloudflare/playwright-mcp": "^0.0.5",
-    "@cloudflare/workers-oauth-provider": "^0.10.3",
-    "@simplewebauthn/browser": "^14.0.0",
-    "@simplewebauthn/server": "^14.0.1"
+    "@cloudflare/workers-oauth-provider": "^0.10.3"
   },
   "allowBuilds": {
     "esbuild": true,
@@ -41,7 +39,7 @@
       "onFail": "ignore"
     }
   },
-  "description": "Private Cloudflare Browser Run MCP with OAuth and owner passkeys for ChatGPT",
+  "description": "Private Cloudflare Browser Run MCP with OAuth and secret owner-key sign-in",
   "license": "MIT",
   "engines": {
     "node": ">=24"

@@ -89,11 +89,29 @@ const registered = await post("/oauth/register", { client_name: "Kitesurf verifi
   token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
 assert.equal(registered.status, 201);
 const clientId = stringField(await objectBody(registered), "client_id");
+const params = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirectUri,
+  scope, resource, state, code_challenge: challenge, code_challenge_method: "S256" });
+const untrustedAuthorization = await request("/authorize?" + params);
+assert.equal(untrustedAuthorization.status, 200);
+assert.equal(untrustedAuthorization.headers.get("Location"), null);
+const lockedPage = await untrustedAuthorization.text();
+assert.match(lockedPage, /id="owner-key"/);
+assert.match(lockedPage, /data-csrf="" data-flow=""/);
+assert.doesNotMatch(lockedPage, /id="consent"/);
+const forgedSessionPage = await (await request("/authorize?" + params, {
+  headers: { Cookie: "__Host-kitesurf-session=" + randomBytes(32).toString("hex") },
+})).text();
+assert.match(forgedSessionPage, /data-csrf="" data-flow=""/);
+assert.equal((await tokenRequest({ grant_type: "client_credentials", client_id: clientId })).status, 400);
+for (const path of ["/auth/register/options", "/auth/register/verify", "/auth/passkey/options", "/auth/passkey/verify"]) {
+  assert.equal((await post(path, {})).status, 404);
+}
+assert.doesNotMatch(lockedPage, /passkey|webauthn/i);
+console.log("PASS: registering a ChatGPT client grants no access; the owner key is required, forged sessions are rejected, and passkey routes are absent.");
 
 const key = readFileSync(new URL("../.secrets/owner-access-key", import.meta.url), "utf8").trim();
 assert.equal((await request("/auth/key", { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json" }, body: JSON.stringify({ key }) })).status, 403);
 assert.equal((await post("/auth/key", { key: "incorrect" })).status, 401);
-assert.equal((await post("/auth/register/options", {})).status, 401);
 const login = await post("/auth/key", { key });
 assert.equal(login.status, 200);
 ownerCookie = login.headers.getSetCookie()[0]!.split(";")[0]!;
@@ -102,8 +120,6 @@ const home = await (await request("/", { headers: { Cookie: ownerCookie } })).te
 csrf = home.match(/data-csrf="([^"]+)"/)?.[1] ?? "";
 assert.ok(csrf);
 
-const params = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirectUri,
-  scope, resource, state, code_challenge: challenge, code_challenge_method: "S256" });
 const consentResponse = await request("/authorize?" + params, { headers: { Cookie: ownerCookie } });
 assert.equal(consentResponse.status, 200);
 const consentPage = await consentResponse.text();
@@ -117,7 +133,7 @@ assert.equal(callback.origin + callback.pathname, redirectUri);
 assert.equal(callback.searchParams.get("iss"), origin);
 assert.equal(callback.searchParams.get("state"), state);
 assert.equal((await post("/auth/consent", { flow }, true)).status, 400);
-console.log("PASS: owner-only login, enrollment gate, CSRF protection, explicit consent, single-use consent, issuer/state binding.");
+console.log("PASS: owner-key login, CSRF protection, explicit consent, single-use consent, issuer/state binding.");
 
 const grant = { grant_type: "authorization_code", code: callback.searchParams.get("code")!, redirect_uri: redirectUri,
   client_id: clientId, code_verifier: verifier, resource };

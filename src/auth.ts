@@ -1,72 +1,12 @@
-import {
-  generateAuthenticationOptions, generateRegistrationOptions,
-  verifyAuthenticationResponse, verifyRegistrationResponse,
-  type AuthenticationResponseJSON, type RegistrationResponseJSON,
-} from "@simplewebauthn/server";
-import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import { AuthorizationError, type AuthRequest, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
-import { cookie, digest, isChatGptClient, isChatGptRedirect, json, now, sameOrigin, SCOPE, sessionCookie, verifyOwnerKey } from "./security.ts";
-import { consumeState, issueSession, listPasskeys, ownerSession, readState, saveState } from "./storage.ts";
+import { cookie, isChatGptClient, isChatGptRedirect, json, sameOrigin, SCOPE, sessionCookie, verifyOwnerKey } from "./security.ts";
+import { consumeState, issueSession, ownerSession, readState, saveState } from "./storage.ts";
 import { authPage } from "./page.ts";
 
 export type AuthEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
-type Challenge = { challenge: string; sessionHash?: string };
-
-const challengeCookie = (id: string) => `__Host-kitesurf-challenge=${id}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`;
-
 async function validSession(request: Request, env: Env): Promise<boolean> {
   const session = await ownerSession(request, env);
   return !!session && session.csrf === request.headers.get("X-CSRF-Token");
-}
-
-async function authOptions(request: Request, env: Env, registering: boolean): Promise<Response> {
-  if (registering && !await validSession(request, env)) return json({ error: "Sign in again before adding a passkey." }, 401);
-  const passkeys = await listPasskeys(env);
-  const credentials = passkeys.map(key => ({ id: key.id, transports: JSON.parse(key.transports) as string[] }));
-  if (registering && credentials.length >= 5) return json({ error: "Five passkeys are already registered." }, 409);
-  if (!registering && !credentials.length) return json({ error: "Use your owner key first, then register a passkey." }, 409);
-  const rpID = new URL(env.PUBLIC_ORIGIN).hostname;
-  const options = registering
-    ? await generateRegistrationOptions({ rpName: "Kitesurf", rpID, userName: "owner", userID: new TextEncoder().encode("kitesurf-owner"),
-      attestationType: "none", authenticatorSelection: { residentKey: "required", userVerification: "required" }, excludeCredentials: credentials })
-    : await generateAuthenticationOptions({ rpID, allowCredentials: credentials, userVerification: "required" });
-  const sessionToken = cookie(request, "__Host-kitesurf-session");
-  const id = await saveState(env, registering ? "registration" : "authentication", {
-    challenge: options.challenge,
-    sessionHash: registering && sessionToken ? await digest(sessionToken) : undefined,
-  });
-  return json(options, 200, { "Set-Cookie": challengeCookie(id) });
-}
-
-async function verifyPasskey(request: Request, env: Env, registering: boolean): Promise<Response> {
-  if (registering && !await validSession(request, env)) return json({ error: "Sign in again before adding a passkey." }, 401);
-  const id = cookie(request, "__Host-kitesurf-challenge");
-  if (!id) return json({ error: "Challenge expired. Please try again." }, 400);
-  const challenge = await consumeState<Challenge>(env, id, registering ? "registration" : "authentication");
-  if (!challenge) return json({ error: "Challenge expired or already used. Please try again." }, 400);
-  const expectedRPID = new URL(env.PUBLIC_ORIGIN).hostname;
-  if (registering) {
-    const sessionToken = cookie(request, "__Host-kitesurf-session");
-    if (!sessionToken || challenge.sessionHash !== await digest(sessionToken)) return json({ error: "Session changed. Please try again." }, 403);
-    const body = await request.json<{ response: RegistrationResponseJSON }>();
-    const result = await verifyRegistrationResponse({ response: body.response, expectedChallenge: challenge.challenge,
-      expectedOrigin: env.PUBLIC_ORIGIN, expectedRPID, requireUserVerification: true });
-    if (!result.verified || !result.registrationInfo) return json({ error: "Passkey verification failed." }, 401);
-    const key = result.registrationInfo.credential;
-    await env.AUTH_DB.prepare("INSERT INTO passkeys (id, public_key, counter, transports, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(key.id, isoBase64URL.fromBuffer(key.publicKey), key.counter, JSON.stringify(key.transports ?? []), now()).run();
-    return json({ ok: true });
-  }
-  const body = await request.json<{ response: AuthenticationResponseJSON }>();
-  const key = (await listPasskeys(env)).find(item => item.id === body.response?.id);
-  if (!key) return json({ error: "Passkey verification failed." }, 401);
-  const result = await verifyAuthenticationResponse({ response: body.response, expectedChallenge: challenge.challenge,
-    expectedOrigin: env.PUBLIC_ORIGIN, expectedRPID, requireUserVerification: true,
-    credential: { id: key.id, publicKey: isoBase64URL.toBuffer(key.public_key), counter: key.counter, transports: JSON.parse(key.transports) } });
-  if (!result.verified) return json({ error: "Passkey verification failed." }, 401);
-  await env.AUTH_DB.prepare("UPDATE passkeys SET counter = MAX(counter, ?) WHERE id IS ?")
-    .bind(result.authenticationInfo.newCounter, key.id).run();
-  return json({ ok: true }, 200, { "Set-Cookie": await issueSession(env) });
 }
 
 async function authorize(request: Request, env: AuthEnv): Promise<Response> {
@@ -100,7 +40,9 @@ export async function authFetch(request: Request, env: AuthEnv): Promise<Respons
     if (url.pathname === "/health") return json({ status: "ok", authentication: "oauth2", browserStarted: false });
     if (url.pathname === "/auth.js" || url.pathname === "/style.css") return env.ASSETS.fetch(request);
   }
-  if (request.method !== "POST" || !url.pathname.startsWith("/auth/")) return json({ error: "Not found" }, 404);
+  if (request.method !== "POST" || !["/auth/key", "/auth/consent", "/auth/revoke", "/auth/logout"].includes(url.pathname)) {
+    return json({ error: "Not found" }, 404);
+  }
   if (!sameOrigin(request, env.PUBLIC_ORIGIN)) return json({ error: "Same-origin JSON requests are required." }, 403);
   if (url.pathname === "/auth/key") {
     const body = await request.json<{ key?: unknown }>();
@@ -109,10 +51,6 @@ export async function authFetch(request: Request, env: AuthEnv): Promise<Respons
     }
     return json({ ok: true }, 200, { "Set-Cookie": await issueSession(env) });
   }
-  if (url.pathname === "/auth/passkey/options") return authOptions(request, env, false);
-  if (url.pathname === "/auth/passkey/verify") return verifyPasskey(request, env, false);
-  if (url.pathname === "/auth/register/options") return authOptions(request, env, true);
-  if (url.pathname === "/auth/register/verify") return verifyPasskey(request, env, true);
   if (!await validSession(request, env)) return json({ error: "Sign in again." }, 401);
   if (url.pathname === "/auth/consent") {
     const body = await request.json<{ flow?: string }>();

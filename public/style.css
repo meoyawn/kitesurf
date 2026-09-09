@@ -10,8 +10,6 @@ section { margin-top: 32px; padding: 28px; background: #fff; border: 1px solid #
 button { border: 0; border-radius: 10px; background: #164d45; color: white; font: inherit; font-weight: 600; padding: 14px 20px; cursor: pointer; }
 button:disabled { opacity: .5; cursor: wait; }
 button:hover { background: #28695b; }
-details { margin-top: 24px; }
-summary { cursor: pointer; font-size: 14px; }
 label { display: block; font-size: 13px; font-weight: 600; margin: 22px 0 9px; }
 input { width: 100%; border: 1px solid #c4d3c6; border-radius: 7px; padding: 13px; font: inherit; background: #fafcf8; }
 #endpoint { font-family: ui-monospace, monospace; font-size: 12px; }

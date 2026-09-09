@@ -1,6 +1,3 @@
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import type { PublicKeyCredentialRequestOptionsJSON, PublicKeyCredentialCreationOptionsJSON } from "@simplewebauthn/browser";
-
 const main = document.querySelector("main");
 const message = document.querySelector<HTMLElement>("#message");
 
@@ -30,24 +27,6 @@ document.querySelector("#key-form")?.addEventListener("submit", function submit(
     if (field) field.value = "";
     await post("/auth/key", { key });
     location.reload();
-  });
-});
-
-document.querySelector("#passkey")?.addEventListener("click", function click() {
-  run(async function signIn() {
-    const optionsJSON = await post<PublicKeyCredentialRequestOptionsJSON>("/auth/passkey/options");
-    const response = await startAuthentication({ optionsJSON });
-    await post("/auth/passkey/verify", { response });
-    location.reload();
-  });
-});
-
-document.querySelector("#register")?.addEventListener("click", function click() {
-  run(async function register() {
-    const optionsJSON = await post<PublicKeyCredentialCreationOptionsJSON>("/auth/register/options");
-    const response = await startRegistration({ optionsJSON });
-    await post("/auth/register/verify", { response });
-    if (message) message.textContent = "Passkey added. You can now use it to sign in.";
   });
 });
 

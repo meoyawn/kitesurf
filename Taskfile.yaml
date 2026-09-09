@@ -38,7 +38,7 @@ tasks:
     deps: [lint, tsc, test]
 
   build:
-    desc: Bundle the passkey sign-in client
+    desc: Bundle the owner sign-in client
     run: once
     cmd: nubx esbuild src/auth-client.ts --bundle --format=esm --minify --outfile=public/auth.js
 

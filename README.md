@@ -1,7 +1,7 @@
 # Kitesurf
 
-Private Cloudflare Browser Run automation for ChatGPT, with OAuth and owner-only
-passkey sign-in. Deploy it to your own Cloudflare account and connect the HTTPS
+Private Cloudflare Browser Run automation for ChatGPT, with OAuth and a secret
+owner key for sign-in. Deploy it to your own Cloudflare account and connect the HTTPS
 `/mcp` endpoint to ChatGPT.
 
 Kitesurf uses Cloudflare's Worker-compatible Playwright MCP package. Its 24 tools
@@ -25,7 +25,7 @@ task check
 | `tsc` | Generate Worker types, then TypeScript 7 typechecking |
 | `test` | Vitest |
 | `check` | Run `lint`, `tsc`, and `test` |
-| `build` | Bundle the passkey sign-in client with esbuild |
+| `build` | Bundle the owner sign-in client with esbuild |
 | `deploy` | Require deployment credentials, run `check` and `build`, apply D1 migrations, deploy |
 
 Prerequisite tasks run once per invocation. Deployment requires a successful
@@ -44,7 +44,7 @@ deployment URL. Copy `.env.example` to the gitignored `.env` and configure:
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account ID |
 | `OAUTH_KV_ID` | ID of a KV namespace for OAuth state |
-| `AUTH_DB_ID` | ID of a D1 database for owner sessions and passkeys |
+| `AUTH_DB_ID` | ID of a D1 database for owner sessions and consent |
 | `PUBLIC_ORIGIN` | Exact public HTTPS origin, without a trailing slash |
 | `OWNER_KEY_HASH` | SHA-256 hex digest of a random 32-byte owner recovery key |
 | `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare deployment token, supplied through the environment |
@@ -101,14 +101,13 @@ gh secret set CLOUDFLARE_API_TOKEN < .cloudflare-api-token
    `https://YOUR-WORKER-HOST/mcp`. Read the hostname from your private `PUBLIC_ORIGIN` configuration.
 2. Choose **OAuth**. Leave client ID and client secret blank; discovery and
    registration are automatic.
-3. Sign in with your owner key or an enrolled passkey, then select **Allow ChatGPT**.
+3. Sign in with the key in the gitignored `.secrets/owner-access-key` file, then
+   select **Allow ChatGPT**. Keep credentials out of MCP URLs and chat messages.
 
-To enroll a passkey, open the deployed home page, sign in with the owner key,
-and select **Add a passkey**. Keep credentials out of the MCP URL and chat messages.
-
-WebAuthn authenticates the human at sign-in. OAuth provides bearer tokens for
-ChatGPT's subsequent MCP requests. Owner approval is required before any browser
-tool can run.
+The secret owner key is the only sign-in method. Only its SHA-256 hash is stored
+in the Worker. OAuth gives ChatGPT bearer tokens after owner sign-in and consent;
+a ChatGPT account or registered OAuth client cannot grant itself access. There
+is no public signup.
 
 ## Access controls and limits
 
@@ -117,9 +116,8 @@ tool can run.
 - OAuth uses S256 PKCE, exact ChatGPT callbacks, resource audience binding,
   one-hour access tokens, rotating refresh tokens with a 30-day lifetime, and
   explicit consent. CIMD and dynamic client registration are supported.
-- Passkeys require user verification and the configured origin/RP ID. D1 consumes
-  challenges and consent records atomically. Enrollment requires an owner session
-  and CSRF token. Owner sessions expire after ten minutes.
+- Owner sessions expire after ten minutes. Consent requires the owner's session
+  and CSRF token; D1 consumes consent records atomically.
 - Rate limits apply to public requests, authentication, and browser tools. These
   operate per Cloudflare location; they are not a global spending cap.
 - Browser sessions have a default 60-second idle timeout. Ask ChatGPT to call

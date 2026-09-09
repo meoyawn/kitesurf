@@ -28,10 +28,3 @@ export async function issueSession(env: Env): Promise<string> {
   const id = await saveState(env, "owner-session", { csrf: randomToken() }, 600);
   return sessionCookie(id);
 }
-
-export type StoredPasskey = { id: string; public_key: string; counter: number; transports: string };
-
-export async function listPasskeys(env: Env): Promise<StoredPasskey[]> {
-  const result = await env.AUTH_DB.prepare("SELECT id, public_key, counter, transports FROM passkeys ORDER BY created_at").all<StoredPasskey>();
-  return result.results;
-}
