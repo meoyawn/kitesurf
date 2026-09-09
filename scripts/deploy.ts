@@ -22,7 +22,6 @@ async function deploy(): Promise<void> {
   required("CLOUDFLARE_API_TOKEN");
   const accountId = required("CLOUDFLARE_ACCOUNT_ID");
   const kvId = required("OAUTH_KV_ID");
-  const databaseId = required("AUTH_DB_ID");
   const publicOrigin = required("PUBLIC_ORIGIN");
   const ownerKeyHash = required("OWNER_KEY_HASH");
   const url = new URL(publicOrigin);
@@ -30,7 +29,7 @@ async function deploy(): Promise<void> {
     throw new Error("PUBLIC_ORIGIN must be the exact public HTTPS origin without a trailing slash.");
   }
   if (!/^[a-f0-9]{32}$/.test(accountId) || !/^[a-f0-9]{32}$/.test(kvId) ||
-    !/^[a-f0-9-]{36}$/.test(databaseId) || !/^[a-f0-9]{64}$/.test(ownerKeyHash)) {
+    !/^[a-f0-9]{64}$/.test(ownerKeyHash)) {
     throw new Error("Deployment IDs or OWNER_KEY_HASH have an invalid format.");
   }
   const errors: ParseError[] = [];
@@ -41,8 +40,6 @@ async function deploy(): Promise<void> {
   config.assets.directory = resolve(config.assets.directory);
   config.vars.PUBLIC_ORIGIN = publicOrigin;
   config.kv_namespaces[0].id = kvId;
-  config.d1_databases[0].database_id = databaseId;
-  config.d1_databases[0].migrations_dir = resolve(config.d1_databases[0].migrations_dir);
 
   await mkdir(".wrangler", { recursive: true });
   const temporary = await mkdtemp(resolve(".wrangler/deploy-"));
@@ -51,7 +48,6 @@ async function deploy(): Promise<void> {
     const secretPath = join(temporary, "secrets.json");
     await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
     await writeFile(secretPath, JSON.stringify({ OWNER_KEY_HASH: ownerKeyHash }), { mode: 0o600 });
-    runWrangler(["d1", "migrations", "apply", "AUTH_DB", "--remote", "--config", configPath]);
     runWrangler(["deploy", "--config", configPath, "--secrets-file", secretPath]);
   } finally {
     await rm(temporary, { recursive: true, force: true });

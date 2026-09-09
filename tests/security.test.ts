@@ -32,7 +32,7 @@ describe("Kitesurf access boundaries", function suite() {
     assert.equal(await verifyOwnerKey("test-only-owner-key", ""), false);
   });
 
-  test("login and consent reject cross-origin and form requests", function origins() {
+  test("consent and revocation reject cross-origin and form requests", function origins() {
     const origin = "https://kitesurf.example";
     assert.equal(sameOrigin(new Request(origin, { headers: { Origin: origin, "Content-Type": "application/json" } }), origin), true);
     assert.equal(sameOrigin(new Request(origin, { headers: { Origin: "https://evil.example", "Content-Type": "application/json" } }), origin), false);

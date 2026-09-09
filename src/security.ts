@@ -24,9 +24,6 @@ export function isChatGptClient(value: string): boolean {
   }
 }
 
-export const randomToken = () => crypto.randomUUID() + crypto.randomUUID();
-export const now = () => Math.floor(Date.now() / 1000);
-
 export async function digest(value: string): Promise<string> {
   const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -44,13 +41,6 @@ export function sameOrigin(request: Request, origin: string): boolean {
 
 export const json = (value: unknown, status = 200, headers: HeadersInit = {}) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store", ...headers } });
-
-export function cookie(request: Request, name: string): string | undefined {
-  return request.headers.get("Cookie")?.split(";").map(part => part.trim()).find(part => part.startsWith(name + "="))?.slice(name.length + 1);
-}
-
-export const sessionCookie = (value: string, maxAge = 600) =>
-  `__Host-kitesurf-session=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 
 export function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");

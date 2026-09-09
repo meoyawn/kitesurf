@@ -1,7 +1,7 @@
 # Kitesurf
 
 Private Cloudflare Browser Run automation for ChatGPT, with OAuth and a secret
-owner key for sign-in. Deploy it to your own Cloudflare account and connect the HTTPS
+owner key for authorization. Deploy it to your own Cloudflare account and connect the HTTPS
 `/mcp` endpoint to ChatGPT.
 
 Kitesurf uses Cloudflare's Worker-compatible Playwright MCP package. Its 24 tools
@@ -25,11 +25,11 @@ task check
 | `tsc` | Generate Worker types, then TypeScript 7 typechecking |
 | `test` | Vitest |
 | `check` | Run `lint`, `tsc`, and `test` |
-| `build` | Bundle the owner sign-in client with esbuild |
-| `deploy` | Require deployment credentials, run `check` and `build`, apply D1 migrations, deploy |
+| `build` | Bundle the owner authorization client with esbuild |
+| `deploy` | Require deployment credentials, run `check` and `build`, deploy |
 
 Prerequisite tasks run once per invocation. Deployment requires a successful
-check and a built sign-in client. Wrangler bundles the Worker during deployment.
+check and a built authorization client. Wrangler bundles the Worker during deployment.
 
 For local HTTPS development, use `nub run dev` from fish. This generates an
 ignored local certificate if needed. Put `OWNER_KEY_HASH` in `.dev.vars` for local
@@ -44,16 +44,15 @@ deployment URL. Copy `.env.example` to the gitignored `.env` and configure:
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account ID |
 | `OAUTH_KV_ID` | ID of a KV namespace for OAuth state |
-| `AUTH_DB_ID` | ID of a D1 database for owner sessions and consent |
 | `PUBLIC_ORIGIN` | Exact public HTTPS origin, without a trailing slash |
 | `OWNER_KEY_HASH` | SHA-256 hex digest of a random 32-byte owner recovery key |
 | `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare deployment token, supplied through the environment |
 
-Create a KV namespace and D1 database in your account, using the Cloudflare
-dashboard or Wrangler, and use their IDs above. Enable a Workers subdomain or
+Create a KV namespace in your account, using the Cloudflare
+dashboard or Wrangler, and use its ID above. Enable a Workers subdomain or
 configure the intended hostname. The default Worker name is `kitesurf-mcp`.
 
-The deployment token needs Workers Scripts, Workers KV Storage and D1 write
+The deployment token needs Workers Scripts and Workers KV Storage write
 access, plus Account Settings read access, scoped to your account. Browser Run
 write access permits Browser Run administration; the Worker itself uses its
 browser binding. No deployment token is uploaded to the Worker.
@@ -75,7 +74,7 @@ env CLOUDFLARE_API_TOKEN=(string trim < .cloudflare-api-token) task deploy
 
 `task deploy` fails if the token or required configuration is missing. It never
 falls back to cached Wrangler credentials. The deploy script creates temporary
-private configuration, applies migrations, uploads the owner-key hash with the
+private configuration, uploads the owner-key hash with the
 Worker, and removes the temporary files afterward.
 
 ## GitHub Actions
@@ -84,7 +83,7 @@ Every pull request runs `task setup` followed by `task check`. PR checks receive
 no deployment secrets. Every push to `master`, including PR merges, runs
 `task setup` and `task deploy`. Deployments are serialized.
 
-Configure all six variables from the table as **GitHub Actions repository
+Configure all five variables from the table as **GitHub Actions repository
 secrets**. Keeping account identifiers and the origin as secrets also masks them
 in deployment logs. Actions are pinned to commit hashes, and deployment does not
 restore dependency caches from PR checks.
@@ -101,13 +100,26 @@ gh secret set CLOUDFLARE_API_TOKEN < .cloudflare-api-token
    `https://YOUR-WORKER-HOST/mcp`. Read the hostname from your private `PUBLIC_ORIGIN` configuration.
 2. Choose **OAuth**. Leave client ID and client secret blank; discovery and
    registration are automatic.
-3. Sign in with the key in the gitignored `.secrets/owner-access-key` file, then
-   select **Allow ChatGPT**. Keep credentials out of MCP URLs and chat messages.
+3. Enter the key from the gitignored `.secrets/owner-access-key` file and select
+   **Allow ChatGPT** to authenticate and approve the connection in one step.
+   Keep credentials out of MCP URLs and chat messages.
 
-The secret owner key is the only sign-in method. Only its SHA-256 hash is stored
-in the Worker. OAuth gives ChatGPT bearer tokens after owner sign-in and consent;
+The secret owner key is required for every connection approval and revocation.
+Only its SHA-256 hash is stored in the Worker. OAuth gives ChatGPT bearer tokens
+after approval, so subsequent requests and token refreshes do not need the key;
 a ChatGPT account or registered OAuth client cannot grant itself access. There
 is no public signup.
+
+Storage consists of the owner-key hash in a Worker secret, OAuth clients, grants,
+and token records in KV, and browser/MCP sessions in Durable Objects. The
+[OAuth provider requires KV](https://github.com/cloudflare/workers-oauth-provider#kv-storage-and-cleanup)
+for refresh, revocation, and cleanup. There are no stored owner login sessions,
+pending consent records, or D1 bindings.
+
+For an existing deployment, keep the same `OWNER_KEY_HASH`, `OAUTH_KV_ID`, and
+Durable Object binding when upgrading. Existing OAuth grants continue to work.
+After deploying this version, the old D1 database and `AUTH_DB_ID` secret can be
+removed; deployment does not delete the database automatically.
 
 ## Access controls and limits
 
@@ -116,8 +128,9 @@ is no public signup.
 - OAuth uses S256 PKCE, exact ChatGPT callbacks, resource audience binding,
   one-hour access tokens, rotating refresh tokens with a 30-day lifetime, and
   explicit consent. CIMD and dynamic client registration are supported.
-- Owner sessions expire after ten minutes. Consent requires the owner's session
-  and CSRF token; D1 consumes consent records atomically.
+- Approval and revocation require the owner key in a same-origin JSON POST.
+  OAuth parameters are validated again when approval is submitted. No login
+  cookies or session CSRF tokens are issued or accepted as owner authentication.
 - Rate limits apply to public requests, authentication, and browser tools. These
   operate per Cloudflare location; they are not a global spending cap.
 - The owner shares one browser across MCP connections. Reconnecting or ending
@@ -126,8 +139,9 @@ is no public signup.
 - Browser sessions have a five-minute idle timeout. Ask ChatGPT to call
   `browser_close` when finished. Cloudflare's Free plan provides 10 browser
   minutes per day across the account, including idle time.
-- The home page can revoke all ChatGPT grants. KV propagation can briefly delay
-  revocation. Public metadata and sign-in traffic can consume Worker requests.
+- The home page can revoke all ChatGPT grants with the owner key. KV propagation
+  can briefly delay revocation. Public metadata and authorization traffic can
+  consume Worker requests.
 
 The published Playwright dependency expects ArrayBuffer WebSocket messages.
 `no_websocket_standard_binary_type` preserves that behavior on newer Workers.
@@ -143,11 +157,13 @@ transports. This preserves tabs and snapshot references across client reconnects
 node --env-file=.env scripts/verify.ts --browser
 ```
 
-This checks public HTTPS, rejected credentials, OAuth discovery, owner login,
-CSRF, PKCE, token refresh and replay rejection, MCP tool discovery, and a real
+This checks public HTTPS, rejected credentials, OAuth discovery, combined key
+entry and consent, same-origin protection, PKCE, token refresh and replay
+rejection, MCP tool discovery, and a real
 navigation/reconnect/snapshot/click/screenshot/close sequence. It verifies both
 page content and a link reference captured before the reconnect. It revokes its
-test grant, does not print tokens, and uses a small amount of Browser Run allowance. Omit `--browser` to
+test grant, does not print tokens, and uses a small amount of Browser Run allowance.
+Omit `--browser` to
 check authentication and tool discovery without launching a browser.
 
 ## References
