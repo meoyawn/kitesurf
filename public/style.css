@@ -1,0 +1,25 @@
+:root { font-family: ui-sans-serif, system-ui, sans-serif; color: #163b3c; background: #f3f6ef; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 6vh 24px; }
+main { max-width: 600px; margin: auto; }
+.brand { font-size: 18px; font-weight: 800; letter-spacing: .15em; margin: 0 0 64px; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .2em; color: #6b817a; }
+h1 { font-size: clamp(32px, 6vw, 48px); letter-spacing: -.055em; line-height: 1.12; margin: 18px 0; font-weight: 600; }
+.intro { font-size: 18px; line-height: 1.6; color: #5e756d; }
+section { margin-top: 32px; padding: 28px; background: #fff; border: 1px solid #d8e1d6; border-radius: 18px; }
+button { border: 0; border-radius: 10px; background: #164d45; color: white; font: inherit; font-weight: 600; padding: 14px 20px; cursor: pointer; }
+button:disabled { opacity: .5; cursor: wait; }
+button:hover { background: #28695b; }
+details { margin-top: 24px; }
+summary { cursor: pointer; font-size: 14px; }
+label { display: block; font-size: 13px; font-weight: 600; margin: 22px 0 9px; }
+input { width: 100%; border: 1px solid #c4d3c6; border-radius: 7px; padding: 13px; font: inherit; background: #fafcf8; }
+#endpoint { font-family: ui-monospace, monospace; font-size: 12px; }
+.hint { color: #6b817a; font-size: 13px; line-height: 1.7; }
+.status { font-size: 13px; color: #327260; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.secondary { background: transparent; color: #356e60; font-size: 12px; padding: 8px 0; }
+.secondary:hover { background: transparent; text-decoration: underline; }
+.cancel { margin-left: 20px; color: #356e60; font-size: 14px; }
+#message { color: #73531c; min-height: 24px; font-size: 14px; }
+footer { margin-top: 32px; color: #708078; font-size: 12px; line-height: 1.7; }
