@@ -142,10 +142,21 @@ removed; deployment does not delete the database automatically.
   `browser_close` when finished. Cloudflare's Free plan provides 10 browser
   minutes per day across the account, including idle time.
 - The Free plan also permits three concurrent browsers and one new browser
-  every 20 seconds. A generic `429 Rate limit exceeded` does not identify daily
-  quota exhaustion. Rejected launches are retried once after 21 seconds when
-  account diagnostics show a free browser slot; browser actions remain ordered
-  during that wait. Explicit daily-quota and concurrency failures are not retried.
+  every 20 seconds. Browser launch `429`s include a `browserLimit` diagnostic in
+  both MCP text and structured content. It names `daily_browser_time` when
+  Cloudflare explicitly reports daily exhaustion, and `concurrent_browsers` and
+  `browser_launch_rate` when account diagnostics show those limits are exhausted.
+  Multiple exhausted limits are reported together, with account values, evidence,
+  retry delays in milliseconds, and the UTC reset time for daily exhaustion.
+  Account diagnostics are a snapshot after the failure. If they do not identify
+  an exhausted limit, the diagnosis is `unknown`; a generic `429` never establishes
+  daily exhaustion by itself.
+- A rejected launch with a confirmed rate limit and a free browser slot is
+  retried once after the reported delay plus one second, up to a 21-second wait
+  (21 seconds if Cloudflare reports no positive delay). Longer waits are returned
+  to the caller. Browser actions remain ordered during the wait. Daily-quota,
+  concurrency, and unknown-limit failures are not retried. A successful retry
+  retains the original limit diagnostic with `retry.recovered: true`.
 - Use `browser_status` to inspect account limits and recent session durations
   and close reasons. `BrowserIdle` indicates a session expired without explicit
   closure. Recent history is not a complete daily usage meter; use the Cloudflare
