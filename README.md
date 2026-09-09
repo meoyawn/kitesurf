@@ -4,8 +4,10 @@ Private Cloudflare Browser Run automation for ChatGPT, with OAuth and a secret
 owner key for authorization. Deploy it to your own Cloudflare account and connect the HTTPS
 `/mcp` endpoint to ChatGPT.
 
-Kitesurf uses Cloudflare's Worker-compatible Playwright MCP package. Its 24 tools
+Kitesurf uses Cloudflare's Worker-compatible Playwright MCP package. Its 24 browser tools
 cover navigation, snapshots, clicks, typing, tabs, screenshots, and inspection.
+An additional `browser_status` tool reports account limits and recent sessions
+without starting a browser.
 It does not include the full Chrome DevTools MCP performance-audit toolset.
 
 ## Development
@@ -136,9 +138,18 @@ removed; deployment does not delete the database automatically.
 - The owner shares one browser across MCP connections. Reconnecting or ending
   an MCP transport does not clear its tabs; use separate tabs for separate pages.
   Browser actions run in order, including calls from overlapping connections.
-- Browser sessions have a five-minute idle timeout. Ask ChatGPT to call
+- Browser sessions have a 60-second idle timeout. Ask ChatGPT to call
   `browser_close` when finished. Cloudflare's Free plan provides 10 browser
   minutes per day across the account, including idle time.
+- The Free plan also permits three concurrent browsers and one new browser
+  every 20 seconds. A generic `429 Rate limit exceeded` does not identify daily
+  quota exhaustion. Rejected launches are retried once after 21 seconds when
+  account diagnostics show a free browser slot; browser actions remain ordered
+  during that wait. Explicit daily-quota and concurrency failures are not retried.
+- Use `browser_status` to inspect account limits and recent session durations
+  and close reasons. `BrowserIdle` indicates a session expired without explicit
+  closure. Recent history is not a complete daily usage meter; use the Cloudflare
+  dashboard to confirm the account's total usage. Diagnostics omit session IDs.
 - The home page can revoke all ChatGPT grants with the owner key. KV propagation
   can briefly delay revocation. Public metadata and authorization traffic can
   consume Worker requests.

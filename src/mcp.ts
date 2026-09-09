@@ -29,7 +29,7 @@ export async function connectBrowserTools(server: Server): Promise<BrowserTools>
 export async function mcpFetch(request: Request, browser: BrowserTools): Promise<Response> {
   const server = new Server({ name: "Kitesurf", version: "0.1.0" }, {
     capabilities: { tools: {} },
-    instructions: "Browser tabs persist across tool calls and MCP reconnects. The owner shares one browser; use tabs for separate pages. Call browser_close when finished to release the browser. Sessions expire after five minutes without browser activity.",
+    instructions: "Browser tabs persist across tool calls and MCP reconnects. The owner shares one browser; use tabs for separate pages. Call browser_close as soon as browsing is finished to release the browser and save quota. Sessions expire after 60 seconds without browser activity. Use browser_status to inspect account limits without starting a browser.",
   });
   server.setRequestHandler(ListToolsRequestSchema, () => browser.listTools());
   server.setRequestHandler(CallToolRequestSchema, request => browser.callTool(request.params));
