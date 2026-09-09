@@ -151,8 +151,13 @@ removed; deployment does not delete the database automatically.
   Account diagnostics are a snapshot after the failure. If they do not identify
   an exhausted limit, the diagnosis is `unknown`; a generic `429` never establishes
   daily exhaustion by itself.
+- Launch errors also retain Cloudflare's limit-related response headers, trace
+  reference, and parsed `Retry-After` delay under `upstreamResponse`. Other header
+  values, including cookies, are omitted. Missing upstream details are reported
+  explicitly rather than inferred from HTTP 429.
 - A rejected launch with a confirmed rate limit and a free browser slot is
-  retried once after the reported delay plus one second, up to a 21-second wait
+  retried once after the longer of the account delay and `Retry-After`, plus one
+  second, up to a 21-second wait
   (21 seconds if Cloudflare reports no positive delay). Longer waits are returned
   to the caller. Browser actions remain ordered during the wait. Daily-quota,
   concurrency, and unknown-limit failures are not retried. A successful retry

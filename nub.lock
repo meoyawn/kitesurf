@@ -6,8 +6,11 @@ settings:
 
 patchedDependencies:
   '@cloudflare/playwright-mcp@0.0.5':
-    hash: 057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163
+    hash: fe4a21898b468b4dc744d6203382054274c91c40ba452d674da2670c34dfa34c
     path: patches/@cloudflare+playwright-mcp@0.0.5.patch
+  '@cloudflare/playwright@0.0.11':
+    hash: 943a6c8575a89b33583d9194246fb1e4120841acdb884ee5d890d277c29864b4
+    path: patches/@cloudflare+playwright@0.0.11.patch
 
 importers:
 
@@ -15,10 +18,10 @@ importers:
     dependencies:
       '@cloudflare/playwright':
         specifier: 0.0.11
-        version: 0.0.11
+        version: 0.0.11(patch_hash=943a6c8575a89b33583d9194246fb1e4120841acdb884ee5d890d277c29864b4)
       '@cloudflare/playwright-mcp':
         specifier: ^0.0.5
-        version: 0.0.5(patch_hash=057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)
+        version: 0.0.5(patch_hash=fe4a21898b468b4dc744d6203382054274c91c40ba452d674da2670c34dfa34c)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)
       '@cloudflare/workers-oauth-provider':
         specifier: ^0.10.3
         version: 0.10.3
@@ -1903,9 +1906,9 @@ snapshots:
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
-  '@cloudflare/playwright-mcp@0.0.5(patch_hash=057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)':
+  '@cloudflare/playwright-mcp@0.0.5(patch_hash=fe4a21898b468b4dc744d6203382054274c91c40ba452d674da2670c34dfa34c)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)':
     dependencies:
-      '@cloudflare/playwright': 0.0.11
+      '@cloudflare/playwright': 0.0.11(patch_hash=943a6c8575a89b33583d9194246fb1e4120841acdb884ee5d890d277c29864b4)
       '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
       agents: 0.0.109(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)
       yaml: 2.9.0
@@ -1914,7 +1917,7 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@cloudflare/playwright@0.0.11': {}
+  '@cloudflare/playwright@0.0.11(patch_hash=943a6c8575a89b33583d9194246fb1e4120841acdb884ee5d890d277c29864b4)': {}
 
   '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260831.1)':
     dependencies:

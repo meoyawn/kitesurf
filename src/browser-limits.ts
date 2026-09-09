@@ -1,10 +1,15 @@
 import type { ActiveSession, ClosedSession, LimitsResponse } from "@cloudflare/playwright";
 import { CallToolResultSchema, type CallToolRequest, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import type { BrowserTools } from "./mcp.ts";
 
 const maxLaunchRetryDelay = 21_000;
 const limitsDocumentation = "https://developers.cloudflare.com/browser-run/limits/";
 const dailyTimeLimit = /browser time limit exceeded for today/i;
+const browserResponseSchema = z.object({
+  source: z.literal("cloudflare_browser_run"), status: z.literal(429),
+  headers: z.record(z.string()), headerNames: z.array(z.string()),
+});
 
 function launchFailure(result: Awaited<ReturnType<BrowserTools["callTool"]>>) {
   const parsed = CallToolResultSchema.safeParse(result);
@@ -12,7 +17,10 @@ function launchFailure(result: Awaited<ReturnType<BrowserTools["callTool"]>>) {
   for (const item of parsed.data.content) {
     if (item.type !== "text") continue;
     const match = item.text.trim().match(/^(?:McpError: MCP error -?\d+: )?(?:Error: )?(?:Error processing the request: )?Unable to create new browser: code: 429: message: (.+)$/s);
-    if (match) return { result: parsed.data, reason: match[1].trim() };
+    if (match) {
+      const response = browserResponseSchema.safeParse(parsed.data.structuredContent?.cloudflareBrowserResponse);
+      return { result: parsed.data, reason: match[1].trim(), response: response.success ? response.data : undefined };
+    }
   }
 }
 
@@ -25,7 +33,15 @@ function limitSummary(account: LimitsResponse) {
   };
 }
 
-function diagnoseFailure(reason: string, account?: LimitsResponse) {
+function retryAfterDelay(value?: string) {
+  if (!value?.trim()) return null;
+  if (!/^\d+$/.test(value.trim()) && !/^[A-Za-z]/.test(value.trim())) return null;
+  const delay = /^\d+$/.test(value.trim()) ? Number(value) * 1_000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : null;
+}
+
+function diagnoseFailure(reason: string, account?: LimitsResponse, response?: z.infer<typeof browserResponseSchema>) {
+  const responseDelay = retryAfterDelay(response?.headers["retry-after"]);
   const limitsHit: {
     limit: "daily_browser_time" | "concurrent_browsers" | "browser_launch_rate";
     evidence: "cloudflare_error" | "account_limits";
@@ -51,10 +67,10 @@ function diagnoseFailure(reason: string, account?: LimitsResponse) {
     });
   }
   if (account && (account.allowedBrowserAcquisitions === 0 || account.timeUntilNextAllowedBrowserAcquisition > 0)) {
-    const retryAfterMs = account.timeUntilNextAllowedBrowserAcquisition;
+    const retryAfterMs = Math.max(account.timeUntilNextAllowedBrowserAcquisition, responseDelay ?? 0);
     limitsHit.push({
       limit: "browser_launch_rate", evidence: "account_limits",
-      message: `The new browser instance rate limit is currently exhausted: allowedBrowserAcquisitions=${account.allowedBrowserAcquisitions}; timeUntilNextAllowedBrowserAcquisition=${retryAfterMs} ms. ` +
+      message: `The new browser instance rate limit is currently exhausted: allowedBrowserAcquisitions=${account.allowedBrowserAcquisitions}; timeUntilNextAllowedBrowserAcquisition=${account.timeUntilNextAllowedBrowserAcquisition} ms. ` +
         (retryAfterMs > 0 ? `Wait at least ${retryAfterMs} ms before another launch.` : "Cloudflare did not provide a positive retry delay; check browser_status before another launch."),
       retryAfterMs: retryAfterMs > 0 ? retryAfterMs : null,
     });
@@ -65,6 +81,10 @@ function diagnoseFailure(reason: string, account?: LimitsResponse) {
     diagnosis: limitsHit.length ? "identified" : "unknown",
     limitsHit,
     accountLimits: account ? limitSummary(account) : null,
+    upstreamResponse: response ? {
+      headers: response.headers, headerNames: response.headerNames,
+      retryAfterMs: responseDelay,
+    } : null,
     note: [
       ...(limitsHit.length ? [] : ["The exact limit that rejected this launch is unknown."]),
       ...(account ? ["Account limits are a snapshot after the rejected launch and may differ from the state at failure."] :
@@ -90,8 +110,8 @@ function annotateResult(result: Awaited<ReturnType<BrowserTools["callTool"]>>, d
   return parsed.data;
 }
 
-const explainFailure = (failure: { result: CallToolResult; reason: string }, account?: LimitsResponse) =>
-  annotateResult(failure.result, diagnoseFailure(failure.reason, account), { attempted: false, delayMs: 0, recovered: false });
+const explainFailure = (failure: NonNullable<ReturnType<typeof launchFailure>>, account?: LimitsResponse) =>
+  annotateResult(failure.result, diagnoseFailure(failure.reason, account, failure.response), { attempted: false, delayMs: 0, recovered: false });
 
 /** Inspect account usage without launching a browser, and retry only rejected launches. */
 export function manageBrowserLimits(browser: BrowserTools, account: {
@@ -148,7 +168,11 @@ export function manageBrowserLimits(browser: BrowserTools, account: {
     try {
       return await browser.callTool(params);
     } catch (error) {
-      const failure = launchFailure({ isError: true, content: [{ type: "text", text: String(error) }] });
+      const response = browserResponseSchema.safeParse(error instanceof Error ? error.cause : undefined);
+      const failure = launchFailure({
+        isError: true, content: [{ type: "text", text: String(error) }],
+        structuredContent: response.success ? { cloudflareBrowserResponse: response.data } : undefined,
+      });
       if (!failure) throw error;
       return failure.result;
     }
@@ -160,8 +184,9 @@ export function manageBrowserLimits(browser: BrowserTools, account: {
     if (!failure) return result;
     if (dailyTimeLimit.test(failure.reason)) return explainFailure(failure);
     const current = await readLimits().catch(() => undefined);
-    const retryDelay = current?.timeUntilNextAllowedBrowserAcquisition ?
-      Math.ceil(current.timeUntilNextAllowedBrowserAcquisition) + 1_000 : maxLaunchRetryDelay;
+    const reportedDelay = Math.max(current?.timeUntilNextAllowedBrowserAcquisition ?? 0,
+      retryAfterDelay(failure.response?.headers["retry-after"]) ?? 0);
+    const retryDelay = reportedDelay ? Math.ceil(reportedDelay) + 1_000 : maxLaunchRetryDelay;
     if (!current || current.activeSessions.length >= current.maxConcurrentSessions ||
       (current.allowedBrowserAcquisitions > 0 && current.timeUntilNextAllowedBrowserAcquisition === 0) ||
       retryDelay > maxLaunchRetryDelay ||
@@ -169,7 +194,7 @@ export function manageBrowserLimits(browser: BrowserTools, account: {
       return explainFailure(failure, current);
     }
     // Keep a single bounded retry in the action queue, allowing for rate-limit propagation.
-    const diagnostic = diagnoseFailure(failure.reason, current);
+    const diagnostic = diagnoseFailure(failure.reason, current, failure.response);
     await new Promise(resolve => setTimeout(resolve, retryDelay));
     const retried = await invoke(params);
     const retryFailure = launchFailure(retried);
@@ -179,7 +204,7 @@ export function manageBrowserLimits(browser: BrowserTools, account: {
       });
     }
     const updated = dailyTimeLimit.test(retryFailure.reason) ? undefined : await readLimits().catch(() => undefined);
-    return annotateResult(retryFailure.result, diagnoseFailure(retryFailure.reason, updated), {
+    return annotateResult(retryFailure.result, diagnoseFailure(retryFailure.reason, updated, retryFailure.response), {
       attempted: true, delayMs: retryDelay, recovered: false,
     });
   }
