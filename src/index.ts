@@ -4,7 +4,7 @@ import { authFetch, type AuthEnv } from "./auth.ts";
 import { mcpFetch } from "./mcp.ts";
 import { boundedBody, isChatGptRedirect, json, SCOPE } from "./security.ts";
 
-export { PlaywrightMCP } from "./browser.ts";
+export { BrowserMCP } from "./browser.ts";
 
 const provider = new OAuthProvider<AuthEnv>({
   apiRoute: "/mcp",

@@ -3,7 +3,6 @@ import { describe, test } from "vitest";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, CallToolResultSchema, JSONRPCResponseSchema, ListToolsRequestSchema, ListToolsResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { connectBrowserTools, mcpFetch, type BrowserTools } from "../src/mcp.ts";
-import { manageBrowserLimits } from "../src/browser-limits.ts";
 
 function browserServer() {
   const server = new Server({ name: "test-browser", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -138,50 +137,6 @@ describe("MCP browser continuity", function suite() {
     } finally {
       await first.close();
       await second.close();
-    }
-  });
-});
-
-describe("MCP browser limit reporting", function suite() {
-  test.each([false, true])("named limits and retry guidance reach the LLM through the MCP transports (protocol error: %s)", async function limitResponse(protocolError) {
-    const server = browserServer();
-    const upstreamError = "Error: Error processing the request: Unable to create new browser: code: 429: message: Too many requests";
-    server.setRequestHandler(CallToolRequestSchema, async function rejectLaunch() {
-      if (protocolError) throw new Error(upstreamError);
-      return { isError: true, content: [{ type: "text", text: upstreamError }], structuredContent: { upstream: "preserved" } };
-    });
-    try {
-      const browser = manageBrowserLimits(await connectBrowserTools(server), {
-        async limits() {
-          return {
-            activeSessions: [{ id: "private-browser-session" }], maxConcurrentSessions: 1,
-            allowedBrowserAcquisitions: 0, timeUntilNextAllowedBrowserAcquisition: 12_500,
-          };
-        },
-        async history() { return []; },
-      });
-      const response = await rpc(browser, "tools/call", { name: "browser_navigate", arguments: { url: "https://example.com" } });
-      assert.equal(response.status, 200);
-      const body = JSONRPCResponseSchema.parse(await response.json());
-      assert.ok("result" in body);
-      const result = CallToolResultSchema.parse(body.result);
-      assert.equal(result.isError, true);
-      assert.deepEqual(result.content[0], { type: "text", text: protocolError ? `McpError: MCP error -32603: ${upstreamError}` : upstreamError });
-      if (!protocolError) assert.equal(result.structuredContent?.upstream, "preserved");
-      assert.partialDeepStrictEqual(result.structuredContent, {
-        browserLimit: {
-          service: "cloudflare_browser_run", status: 429, upstreamMessage: "Too many requests",
-          limitsHit: [{ limit: "concurrent_browsers" }, { limit: "browser_launch_rate", retryAfterMs: 12_500 }],
-          accountLimits: { activeBrowsers: 1, maxConcurrentBrowsers: 1 },
-        },
-      });
-      assert.equal(result.content[1].type, "text");
-      if (result.content[1].type !== "text") throw new Error("Missing text diagnostic");
-      const diagnosticText = result.content[1].text;
-      assert.deepEqual(JSON.parse(diagnosticText.slice(diagnosticText.indexOf("\n") + 1)), result.structuredContent?.browserLimit);
-      assert.doesNotMatch(text(result), /private-browser-session/);
-    } finally {
-      await server.close();
     }
   });
 });

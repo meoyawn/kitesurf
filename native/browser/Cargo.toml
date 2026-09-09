@@ -1,0 +1,25 @@
+[package]
+name = "kitesurf-browser"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["render", "stealth"]
+render = ["dep:obscura-render"]
+stealth = []
+
+[dependencies]
+rquickjs = { git = "https://github.com/mrchantey/rquickjs", rev = "9d3206c80d3ff2e819abca783a6859e83a5d7b5f", features = ["rust-alloc"] }
+talc = { version = "=5.1.0", features = ["counters"] }
+js-sys = "=0.3.105"
+obscura-dom = { git = "https://github.com/h4ckf0r0day/obscura", rev = "727cc46d56290995245fbe790caed52fc699452a" }
+obscura-render = { package = "kitesurf-layout", path = "../layout", optional = true }
+serde_json = "=1.0.151"
+html5ever = "=0.39.0"
+url = "=2.5.8"
+wasm-bindgen = "=0.2.128"
+console_error_panic_hook = "=0.1.7"

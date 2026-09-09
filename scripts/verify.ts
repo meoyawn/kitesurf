@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 
 const origin = process.argv.slice(2).find(arg => !arg.startsWith("--")) ?? process.env.PUBLIC_ORIGIN ?? "https://localhost:8787";
-const useBrowser = process.argv.includes("--browser");
+const useYandex = process.argv.includes("--yandex");
+const useBrowser = process.argv.includes("--browser") || useYandex;
 const resource = origin + "/mcp";
 const scope = "browser:use";
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
@@ -95,7 +96,7 @@ assert.equal(untrustedAuthorization.headers.get("Location"), null);
 const lockedPage = await untrustedAuthorization.text();
 assert.match(lockedPage, /id="owner-key"/);
 assert.match(lockedPage, /id="consent" type="submit">Allow ChatGPT/);
-assert.match(lockedPage, /Cloudflare browser quota/);
+assert.match(lockedPage, /interact with links and forms using your private browser/);
 assert.doesNotMatch(lockedPage, /data-csrf|data-flow|Sign in/);
 assert.equal(untrustedAuthorization.headers.get("Set-Cookie"), null);
 const forgedSessionPage = await (await request("/authorize?" + params, {
@@ -150,21 +151,52 @@ try {
     const navigation = await rpc(3, "tools/call", { name: "browser_navigate", arguments: { url: "https://example.com" } });
     assert.ok(!navigation.error && !navigation.result?.isError, "Browser navigation failed: " + JSON.stringify(navigation));
     assert.match(JSON.stringify(navigation.result), /Example Domain/);
-    const navigationText = navigation.result.content.filter((item: { type: string }) => item.type === "text")
-      .map((item: { text: string }) => item.text).join("\n");
-    const linkRef = navigationText.match(/link "[^"]+" \[ref=([^\]]+)\]/)?.[1];
-    assert.ok(linkRef, "Navigation did not return a clickable link reference.");
+    const linkRef = navigation.result.structuredContent.result.elements.find((element: { href?: string }) => element.href)?.ref;
+    assert.equal(typeof linkRef, "number", "Navigation did not return a clickable link reference.");
     mcpSession = "";
     await rpc(4, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "kitesurf-reconnected", version: "1.0.0" } });
     const snapshot = await rpc(5, "tools/call", { name: "browser_snapshot", arguments: {} });
     assert.ok(!snapshot.error && !snapshot.result?.isError, "Snapshot after reconnect failed.");
     assert.match(JSON.stringify(snapshot.result), /Example Domain/, "MCP reconnect lost the navigated page.");
-    const click = await rpc(6, "tools/call", { name: "browser_click", arguments: { element: "Example Domain information link", ref: linkRef } });
+    const click = await rpc(6, "tools/call", { name: "browser_click", arguments: { ref: linkRef } });
     assert.ok(!click.error && !click.result?.isError, "Click after reconnect failed: " + JSON.stringify(click));
     assert.match(JSON.stringify(click.result), /iana\.org/, "Click did not follow the original page's link.");
-    const screenshot = await rpc(7, "tools/call", { name: "browser_take_screenshot", arguments: {} });
-    assert.ok(screenshot.result?.content.some((item: { type: string }) => item.type === "image"), "Screenshot did not contain an image.");
-    console.log("PASS: live browser preserved its page and link reference across MCP reconnect, followed the link, and returned a screenshot.");
+    console.log("PASS: live browser preserved its page and link reference across MCP reconnect and followed the link.");
+    if (useYandex) {
+      const url = "https://yandex.ru/jobs/vacancies/city_kazan?profession=backend-developer&profession=system-developer&skills=74&skills=378&skills=64&skills=160&pro_levels=senior";
+      const selector = 'a[class*="VacancySnippet_titleLink"]';
+      const expression = "Array.from(document.querySelectorAll(" + JSON.stringify(selector) + ")).map(el=>({title:el.textContent.trim(),href:el.href}))";
+      let id = 10;
+      async function tool(name: string, args = {}) {
+        const response = await rpc(id++, "tools/call", { name, arguments: args });
+        assert.ok(!response.error && !response.result?.isError, name + " failed: " + JSON.stringify(response));
+        return response.result.structuredContent.result;
+      }
+      const started = performance.now();
+      await tool("browser_navigate", { url });
+      const before = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
+      assert.equal(before.length, 20, "Expected exactly 20 openings before scrolling");
+      const beforeStatus = await tool("browser_status");
+      assert.ok(!beforeStatus.network.events.some((event: { url: string }) => event.url.includes("cursor=")), "Pagination ran before scrolling");
+      const scrollStarted = performance.now();
+      await tool("browser_scroll", { bottom: true });
+      await tool("browser_wait_for", { expression: "document.querySelectorAll(" + JSON.stringify(selector) + ").length===21", timeout: 10_000 });
+      const after = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
+      assert.equal(after.length, 21);
+      assert.equal(new Set(after.map(job => job.href)).size, 21, "Expected 21 distinct jobs");
+      assert.ok(before.every(job => after.some(next => next.href === job.href)), "Scrolling lost an existing job");
+      const added = after.filter(job => !before.some(previous => previous.href === job.href));
+      assert.equal(added.length, 1);
+      const status = await tool("browser_status");
+      assert.ok(status.network.events.some((event: { url: string; status: number }) => event.url.includes("cursor=") && event.status === 200), "Page did not fetch its next cursor");
+      const report = {
+        before: before.length, after: after.length, added,
+        elapsedMs: Math.round(performance.now() - started), scrollMs: Math.round(performance.now() - scrollStarted),
+        wasmMemoryBytes: status.wasmMemoryBytes, requests: status.network.requests, scriptErrors: status.errors,
+      };
+      writeFileSync(new URL("../.wrangler/yandex-result.json", import.meta.url), JSON.stringify(report, null, 2) + "\n");
+      console.log("PASS: live Yandex 20→21 after scrolling. " + JSON.stringify(report));
+    }
   }
 } finally {
   if (browserUsed) {

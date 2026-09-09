@@ -5,15 +5,11 @@
   "compatibility_date": "2026-09-09",
   "compatibility_flags": [
     "nodejs_compat",
-    "global_fetch_strictly_public",
-    // @cloudflare/playwright 0.0.11 decodes WebSocket frames as ArrayBuffer.
-    "no_websocket_standard_binary_type"
+    "global_fetch_strictly_public"
   ],
   "workers_dev": true,
   "preview_urls": false,
-  "browser": {
-    "binding": "BROWSER"
-  },
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -23,7 +19,7 @@
     "bindings": [
       {
         "name": "MCP_OBJECT",
-        "class_name": "PlaywrightMCP"
+        "class_name": "BrowserMCP"
       }
     ]
   },
@@ -33,6 +29,10 @@
       "new_sqlite_classes": [
         "PlaywrightMCP"
       ]
+    },
+    {
+      "tag": "v2",
+      "renamed_classes": [{ "from": "PlaywrightMCP", "to": "BrowserMCP" }]
     }
   ],
   "kv_namespaces": [
