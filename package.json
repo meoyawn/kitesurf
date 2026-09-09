@@ -39,7 +39,7 @@
       "onFail": "ignore"
     }
   },
-  "description": "Private Cloudflare Browser Run MCP with OAuth and secret owner-key sign-in",
+  "description": "Private Cloudflare Browser Run MCP with OAuth and owner-key authorization",
   "license": "MIT",
   "engines": {
     "node": ">=24"

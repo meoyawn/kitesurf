@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { authFetch, type AuthEnv } from "./auth.ts";
-import { boundedBody, isChatGptRedirect, json, now, SCOPE } from "./security.ts";
+import { boundedBody, isChatGptRedirect, json, SCOPE } from "./security.ts";
 
 export const PlaywrightMCP = createMcpAgent(env.BROWSER);
 
@@ -85,7 +85,6 @@ export default {
     }
   },
   async scheduled(_event, workerEnv) {
-    await workerEnv.AUTH_DB.prepare("DELETE FROM auth_state WHERE expires_at <= ?").bind(now()).run();
     await provider.purgeExpiredData(workerEnv, { batchSize: 100 });
   },
 } satisfies ExportedHandler<AuthEnv>;

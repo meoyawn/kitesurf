@@ -10,8 +10,6 @@ const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
 const verifier = randomBytes(32).toString("base64url");
 const challenge = createHash("sha256").update(verifier).digest("base64url");
 const state = randomBytes(16).toString("hex");
-let ownerCookie = "";
-let csrf = "";
 let mcpSession = "";
 let accessToken = "";
 
@@ -19,9 +17,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   return fetch(origin + path, { ...init, redirect: "manual", signal: AbortSignal.timeout(60000) });
 }
 
-async function post(path: string, data: unknown, authenticated = false): Promise<Response> {
-  return request(path, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin,
-    ...(authenticated ? { Cookie: ownerCookie, "X-CSRF-Token": csrf } : {}) }, body: JSON.stringify(data) });
+async function post(path: string, data: unknown): Promise<Response> {
+  return request(path, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin }, body: JSON.stringify(data) });
 }
 
 async function tokenRequest(data: Record<string, string>): Promise<Response> {
@@ -96,44 +93,37 @@ assert.equal(untrustedAuthorization.status, 200);
 assert.equal(untrustedAuthorization.headers.get("Location"), null);
 const lockedPage = await untrustedAuthorization.text();
 assert.match(lockedPage, /id="owner-key"/);
-assert.match(lockedPage, /data-csrf="" data-flow=""/);
-assert.doesNotMatch(lockedPage, /id="consent"/);
+assert.match(lockedPage, /id="consent" type="submit">Allow ChatGPT/);
+assert.match(lockedPage, /Cloudflare browser quota/);
+assert.doesNotMatch(lockedPage, /data-csrf|data-flow|Sign in/);
+assert.equal(untrustedAuthorization.headers.get("Set-Cookie"), null);
 const forgedSessionPage = await (await request("/authorize?" + params, {
   headers: { Cookie: "__Host-kitesurf-session=" + randomBytes(32).toString("hex") },
 })).text();
-assert.match(forgedSessionPage, /data-csrf="" data-flow=""/);
+assert.match(forgedSessionPage, /id="owner-key"/);
+assert.match(forgedSessionPage, /id="consent" type="submit">Allow ChatGPT/);
 assert.equal((await tokenRequest({ grant_type: "client_credentials", client_id: clientId })).status, 400);
-for (const path of ["/auth/register/options", "/auth/register/verify", "/auth/passkey/options", "/auth/passkey/verify"]) {
+for (const path of ["/auth/register/options", "/auth/register/verify", "/auth/passkey/options", "/auth/passkey/verify", "/auth/key", "/auth/logout"]) {
   assert.equal((await post(path, {})).status, 404);
 }
 assert.doesNotMatch(lockedPage, /passkey|webauthn/i);
-console.log("PASS: registering a ChatGPT client grants no access; the owner key is required, forged sessions are rejected, and passkey routes are absent.");
+console.log("PASS: registering a ChatGPT client grants no access; key entry and consent share one form, and login/session routes are absent.");
 
 const key = readFileSync(new URL("../.secrets/owner-access-key", import.meta.url), "utf8").trim();
-assert.equal((await request("/auth/key", { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json" }, body: JSON.stringify({ key }) })).status, 403);
-assert.equal((await post("/auth/key", { key: "incorrect" })).status, 401);
-const login = await post("/auth/key", { key });
-assert.equal(login.status, 200);
-ownerCookie = login.headers.getSetCookie()[0]!.split(";")[0]!;
-assert.match(login.headers.getSetCookie()[0]!, /HttpOnly; Secure; SameSite=Lax/);
-const home = await (await request("/", { headers: { Cookie: ownerCookie } })).text();
-csrf = home.match(/data-csrf="([^"]+)"/)?.[1] ?? "";
-assert.ok(csrf);
-
-const consentResponse = await request("/authorize?" + params, { headers: { Cookie: ownerCookie } });
-assert.equal(consentResponse.status, 200);
-const consentPage = await consentResponse.text();
-const flow = consentPage.match(/data-flow="([^"]+)"/)?.[1];
-assert.ok(flow);
-assert.equal((await post("/auth/consent", { flow })).status, 401);
-const consent = await post("/auth/consent", { flow }, true);
+const query = "?" + params;
+assert.equal((await request("/auth/consent", { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json" }, body: JSON.stringify({ key, query }) })).status, 403);
+assert.equal((await post("/auth/consent", { key: "incorrect", query })).status, 401);
+assert.equal((await post("/auth/consent", { query })).status, 401);
+assert.equal((await request("/auth/revoke", { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json" }, body: JSON.stringify({ key }) })).status, 403);
+assert.equal((await post("/auth/revoke", {})).status, 401);
+const consent = await post("/auth/consent", { key, query });
 assert.equal(consent.status, 200);
+assert.equal(consent.headers.get("Set-Cookie"), null);
 const callback = new URL(stringField(await objectBody(consent), "redirectTo"));
 assert.equal(callback.origin + callback.pathname, redirectUri);
 assert.equal(callback.searchParams.get("iss"), origin);
 assert.equal(callback.searchParams.get("state"), state);
-assert.equal((await post("/auth/consent", { flow }, true)).status, 400);
-console.log("PASS: owner-key login, CSRF protection, explicit consent, single-use consent, issuer/state binding.");
+console.log("PASS: one-step owner-key approval without cookies, same-origin protection, key-gated revocation, issuer/state binding.");
 
 const grant = { grant_type: "authorization_code", code: callback.searchParams.get("code")!, redirect_uri: redirectUri,
   client_id: clientId, code_verifier: verifier, resource };
@@ -176,6 +166,5 @@ try {
   const revoked = await request(revocationUrl.pathname, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ token: stringField(fresh, "refresh_token"), token_type_hint: "refresh_token", client_id: clientId }) });
   assert.equal(revoked.status, 200);
-  await post("/auth/logout", {}, true);
 }
 console.log("Verification complete. No tokens were printed or saved.");
