@@ -1,0 +1,56 @@
+version: '3'
+
+dotenv: ['.env']
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
+tasks:
+  setup:
+    desc: Install dependencies with nub
+    run: once
+    cmd: nub i
+
+  lint:
+    desc: Lint TypeScript with Oxlint
+    run: once
+    cmd: nubx oxlint --deny-warnings src scripts tests
+
+  types:
+    desc: Generate Cloudflare binding and runtime types
+    run: once
+    cmd: nubx wrangler types
+
+  tsc:
+    desc: Typecheck with TypeScript 7
+    run: once
+    deps: [types]
+    cmd: nubx tsc --noEmit
+
+  test:
+    desc: Run Vitest
+    run: once
+    cmd: nubx vitest run
+
+  check:
+    desc: Run lint, typechecking, and tests
+    run: once
+    deps: [lint, tsc, test]
+
+  build:
+    desc: Bundle the passkey sign-in client
+    run: once
+    cmd: nubx esbuild src/auth-client.ts --bundle --format=esm --minify --outfile=public/auth.js
+
+  deploy:
+    desc: Check, build, migrate D1, and deploy the protected Worker
+    deps: [check, build]
+    requires:
+      vars:
+        - CLOUDFLARE_API_TOKEN
+        - CLOUDFLARE_ACCOUNT_ID
+        - OAUTH_KV_ID
+        - AUTH_DB_ID
+        - PUBLIC_ORIGIN
+        - OWNER_KEY_HASH
+    cmd: node scripts/deploy.ts

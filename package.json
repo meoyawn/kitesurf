@@ -1,0 +1,49 @@
+{
+  "name": "kitesurf-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "task setup",
+    "lint": "task lint",
+    "tsc": "task tsc",
+    "test": "task test",
+    "check": "task check",
+    "build": "task build",
+    "deploy": "task deploy",
+    "types": "task types",
+    "dev": "fish scripts/dev.fish"
+  },
+  "dependencies": {
+    "@cloudflare/playwright-mcp": "^0.0.5",
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.1"
+  },
+  "allowBuilds": {
+    "esbuild": true,
+    "workerd": true
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260908.1",
+    "@types/node": "^26.5.0",
+    "esbuild": "0.28.2",
+    "jsonc-parser": "^3.3.1",
+    "oxlint": "^1.82.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0",
+    "wrangler": "4.128.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "nub",
+      "version": "^0.8.3",
+      "onFail": "ignore"
+    }
+  },
+  "description": "Private Cloudflare Browser Run MCP with OAuth and owner passkeys for ChatGPT",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  }
+}
