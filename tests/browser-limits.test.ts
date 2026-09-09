@@ -85,7 +85,12 @@ describe("Browser Run limits", function suite() {
     await vi.advanceTimersByTimeAsync(20_999);
     assert.deepEqual(browser.callTool.mock.calls.map(([params]) => params.name), ["browser_navigate"]);
     await vi.advanceTimersByTimeAsync(1);
-    assert.equal(resultText(await navigation), "Page loaded");
+    const navigated = CallToolResultSchema.parse(await navigation);
+    assert.deepEqual(navigated.content[0], { type: "text", text: "Page loaded" });
+    assert.ok(!navigated.isError);
+    assert.partialDeepStrictEqual(navigated.structuredContent, {
+      browserLimit: { limitsHit: [{ limit: "browser_launch_rate" }], retry: { attempted: true, delayMs: 21_000, recovered: true } },
+    });
     assert.equal(resultText(await click), "Page loaded");
     assert.deepEqual(browser.callTool.mock.calls.map(([params]) => params.name), [
       "browser_navigate", "browser_navigate", "browser_click",
@@ -94,10 +99,20 @@ describe("Browser Run limits", function suite() {
   });
 
   test("explicit daily exhaustion is reported without another launch", async function dailyQuota() {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-09T23:59:30Z"));
     const { browser, account, managed } = fixture();
     browser.callTool.mockResolvedValueOnce(rejectedLaunch("Browser time limit exceeded for today"));
-    const result = await managed.callTool({ name: "browser_navigate" });
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
     assert.match(resultText(result), /resets at the next UTC day/);
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: {
+        diagnosis: "identified", upstreamMessage: "Browser time limit exceeded for today",
+        limitsHit: [{ limit: "daily_browser_time", evidence: "cloudflare_error", retryAfterMs: 30_000, resetsAt: "2026-09-10T00:00:00.000Z" }],
+        accountLimits: null, retry: { attempted: false, recovered: false },
+      },
+    });
+    assert.equal(result.isError, true);
     assert.equal(browser.callTool.mock.calls.length, 1);
     assert.equal(account.limits.mock.calls.length, 0);
   });
@@ -111,10 +126,16 @@ describe("Browser Run limits", function suite() {
     });
     const result = await managed.callTool({ name: "browser_navigate" });
     assert.match(resultText(result), /3\/3 active browsers/);
+    assert.partialDeepStrictEqual(CallToolResultSchema.parse(result).structuredContent, {
+      browserLimit: {
+        limitsHit: [{ limit: "concurrent_browsers", evidence: "account_limits", retryAfterMs: null }],
+        accountLimits: { activeBrowsers: 3, maxConcurrentBrowsers: 3 },
+      },
+    });
     assert.equal(browser.callTool.mock.calls.length, 1);
   });
 
-  test("a persistent generic 429 stops after one retry and leaves the daily cause unknown", async function boundedRetry() {
+  test("a persistent launch-rate 429 reports the rate limit and stops after one retry", async function boundedRetry() {
     vi.useFakeTimers();
     const { browser, managed } = fixture();
     browser.callTool.mockImplementation(async () => rejectedLaunch());
@@ -122,6 +143,14 @@ describe("Browser Run limits", function suite() {
     await vi.advanceTimersByTimeAsync(21_000);
     const result = await pending;
     assert.match(resultText(result), /does not establish that the daily/);
+    assert.match(resultText(result), /new browser instance rate limit/);
+    assert.match(resultText(result), /Wait at least 20000 ms/);
+    assert.partialDeepStrictEqual(CallToolResultSchema.parse(result).structuredContent, {
+      browserLimit: {
+        limitsHit: [{ limit: "browser_launch_rate", evidence: "account_limits", retryAfterMs: 20_000 }],
+        retry: { attempted: true, delayMs: 21_000, recovered: false },
+      },
+    });
     assert.equal(browser.callTool.mock.calls.length, 2);
     assert.equal(vi.getTimerCount(), 0);
     browser.callTool.mockResolvedValue({ content: [{ type: "text", text: "Closed" }] });
@@ -144,11 +173,116 @@ describe("Browser Run limits", function suite() {
     const result = await managed.callTool({ name: "browser_navigate" });
     assert.match(resultText(result), /Unable to create new browser: code: 429/);
     assert.match(resultText(result), /Account limits could not be read/);
+    assert.partialDeepStrictEqual(CallToolResultSchema.parse(result).structuredContent, {
+      browserLimit: { diagnosis: "unknown", limitsHit: [], accountLimits: null },
+    });
     assert.equal(browser.callTool.mock.calls.length, 1);
     const status = CallToolResultSchema.parse(await managed.callTool({ name: "browser_status" }));
     assert.equal(status.isError, false);
     assert.deepEqual(status.structuredContent?.recentSessions, []);
     assert.equal(status.structuredContent?.limits, null);
+  });
+
+  test("all exhausted limits are named when concurrency and launch rate are both blocked", async function multipleLimits() {
+    const { browser, account, managed } = fixture();
+    browser.callTool.mockResolvedValueOnce(rejectedLaunch());
+    account.limits.mockResolvedValue({
+      activeSessions: [{ id: "private-session" }], maxConcurrentSessions: 1,
+      allowedBrowserAcquisitions: 0, timeUntilNextAllowedBrowserAcquisition: 12_500,
+    });
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: {
+        limitsHit: [
+          { limit: "concurrent_browsers", retryAfterMs: null },
+          { limit: "browser_launch_rate", retryAfterMs: 12_500 },
+        ],
+      },
+    });
+    assert.match(resultText(result), /1\/1 active browsers/);
+    assert.match(resultText(result), /12500 ms/);
+    assert.doesNotMatch(resultText(result), /private-session/);
+    assert.equal(browser.callTool.mock.calls.length, 1);
+  });
+
+  test("a generic 429 with clear account limits remains unknown without a speculative retry", async function unknownLimit() {
+    const { browser, account, managed } = fixture();
+    browser.callTool.mockResolvedValueOnce(rejectedLaunch());
+    account.limits.mockResolvedValue({
+      activeSessions: [], maxConcurrentSessions: 200,
+      allowedBrowserAcquisitions: 1, timeUntilNextAllowedBrowserAcquisition: 0,
+    });
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: { diagnosis: "unknown", limitsHit: [], accountLimits: { maxConcurrentBrowsers: 200 } },
+    });
+    assert.match(resultText(result), /exact limit that rejected this launch is unknown/);
+    assert.equal(browser.callTool.mock.calls.length, 1);
+  });
+
+  test.each([false, true])("Cloudflare's documented processing-error prefix is diagnosed (thrown: %s)", async function wrappedError(thrown) {
+    const { browser, managed } = fixture();
+    const message = "Error processing the request: Unable to create new browser: code: 429: message: Browser time limit exceeded for today";
+    if (thrown) browser.callTool.mockRejectedValueOnce(new Error(message));
+    else browser.callTool.mockResolvedValueOnce({ isError: true, content: [{ type: "text", text: message }] });
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
+    assert.equal(result.isError, true);
+    assert.match(resultText(result), /Error processing the request: Unable to create new browser/);
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: { limitsHit: [{ limit: "daily_browser_time", evidence: "cloudflare_error" }] },
+    });
+  });
+
+  test("retry timing follows the account delay and preserves both forms of upstream content", async function accountRetryDelay() {
+    vi.useFakeTimers();
+    const { browser, account, managed } = fixture();
+    account.limits.mockResolvedValue({
+      activeSessions: [], maxConcurrentSessions: 200,
+      allowedBrowserAcquisitions: 0, timeUntilNextAllowedBrowserAcquisition: 2_500,
+    });
+    browser.callTool.mockResolvedValueOnce(rejectedLaunch()).mockResolvedValueOnce({
+      content: [{ type: "text", text: "Page loaded" }], structuredContent: { pageTitle: "Example" },
+    });
+    const pending = managed.callTool({ name: "browser_navigate" });
+    await vi.advanceTimersByTimeAsync(3_499);
+    assert.equal(browser.callTool.mock.calls.length, 1);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = CallToolResultSchema.parse(await pending);
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      pageTitle: "Example",
+      browserLimit: { limitsHit: [{ limit: "browser_launch_rate", retryAfterMs: 2_500 }], retry: { delayMs: 3_500, recovered: true } },
+    });
+    assert.match(resultText(result), /recovered after retry/);
+    assert.equal(browser.callTool.mock.calls.length, 2);
+  });
+
+  test("long launch-rate cooldowns are reported immediately without retrying early", async function longDelay() {
+    const { browser, account, managed } = fixture();
+    account.limits.mockResolvedValue({
+      activeSessions: [], maxConcurrentSessions: 3,
+      allowedBrowserAcquisitions: 0, timeUntilNextAllowedBrowserAcquisition: 90_000,
+    });
+    browser.callTool.mockResolvedValueOnce(rejectedLaunch());
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: { limitsHit: [{ limit: "browser_launch_rate", retryAfterMs: 90_000 }], retry: { attempted: false } },
+    });
+    assert.equal(browser.callTool.mock.calls.length, 1);
+  });
+
+  test("a retry that hits a different limit reports the latest cause", async function changedLimit() {
+    vi.useFakeTimers();
+    const { browser, managed } = fixture();
+    browser.callTool.mockResolvedValueOnce(rejectedLaunch()).mockResolvedValueOnce(rejectedLaunch("Browser time limit exceeded for today"));
+    const pending = managed.callTool({ name: "browser_navigate" });
+    await vi.advanceTimersByTimeAsync(21_000);
+    const result = CallToolResultSchema.parse(await pending);
+    assert.equal(result.isError, true);
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: { limitsHit: [{ limit: "daily_browser_time", evidence: "cloudflare_error" }], retry: { attempted: true, recovered: false } },
+    });
+    assert.equal(browser.callTool.mock.calls.length, 2);
+    assert.equal(vi.getTimerCount(), 0);
   });
 
   test("a rejected MCP request does not block cleanup or later actions", async function requestFailure() {
