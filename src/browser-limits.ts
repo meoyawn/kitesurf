@@ -37,11 +37,18 @@ function retryAfterDelay(value?: string) {
   if (!value?.trim()) return null;
   if (!/^\d+$/.test(value.trim()) && !/^[A-Za-z]/.test(value.trim())) return null;
   const delay = /^\d+$/.test(value.trim()) ? Number(value) * 1_000 : Date.parse(value) - Date.now();
-  return Number.isFinite(delay) ? Math.max(0, delay) : null;
+  return Number.isFinite(new Date(Date.now() + delay).getTime()) ? Math.max(0, delay) : null;
 }
 
 function diagnoseFailure(reason: string, account?: LimitsResponse, response?: z.infer<typeof browserResponseSchema>) {
+  const now = Date.now();
+  const reset = new Date(now);
+  reset.setUTCHours(24, 0, 0, 0);
   const responseDelay = retryAfterDelay(response?.headers["retry-after"]);
+  const suspectedDailyLimit = !dailyTimeLimit.test(reason) && account &&
+    account.activeSessions.length < account.maxConcurrentSessions && account.allowedBrowserAcquisitions > 0 &&
+    account.timeUntilNextAllowedBrowserAcquisition === 0 && responseDelay !== null &&
+    responseDelay > 60_000 && Math.abs(now + responseDelay - reset.getTime()) <= 5_000;
   const limitsHit: {
     limit: "daily_browser_time" | "concurrent_browsers" | "browser_launch_rate";
     evidence: "cloudflare_error" | "account_limits";
@@ -50,9 +57,6 @@ function diagnoseFailure(reason: string, account?: LimitsResponse, response?: z.
     resetsAt?: string;
   }[] = [];
   if (dailyTimeLimit.test(reason)) {
-    const now = Date.now();
-    const reset = new Date(now);
-    reset.setUTCHours(24, 0, 0, 0);
     limitsHit.push({
       limit: "daily_browser_time", evidence: "cloudflare_error",
       message: "Cloudflare reports that today's daily browser-time allowance is exhausted. It resets at the next UTC day. Idle browser time counts toward this allowance.",
@@ -80,13 +84,18 @@ function diagnoseFailure(reason: string, account?: LimitsResponse, response?: z.
     upstreamMessage: reason,
     diagnosis: limitsHit.length ? "identified" : "unknown",
     limitsHit,
+    suspectedLimit: suspectedDailyLimit ? {
+      limit: "daily_browser_time", confidence: "inferred", evidence: "retry_after_utc_reset",
+    } : null,
     accountLimits: account ? limitSummary(account) : null,
     upstreamResponse: response ? {
       headers: response.headers, headerNames: response.headerNames,
       retryAfterMs: responseDelay,
+      retryAt: responseDelay === null ? null : new Date(now + responseDelay).toISOString(),
     } : null,
     note: [
       ...(limitsHit.length ? [] : ["The exact limit that rejected this launch is unknown."]),
+      ...(suspectedDailyLimit ? ["Cloudflare's long Retry-After ends at the next UTC day while concurrency and launch-rate capacity are available. This suggests the daily browser-time allowance, but Cloudflare did not explicitly name the quota."] : []),
       ...(account ? ["Account limits are a snapshot after the rejected launch and may differ from the state at failure."] :
         dailyTimeLimit.test(reason) ? [] : ["Account limits could not be read."]),
       ...(dailyTimeLimit.test(reason) ? [] : ["A generic 429 does not establish that the daily browser-time allowance is exhausted. Daily usage is not exposed by the limits API."]),

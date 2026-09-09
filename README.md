@@ -155,6 +155,10 @@ removed; deployment does not delete the database automatically.
   reference, and parsed `Retry-After` delay under `upstreamResponse`. Other header
   values, including cookies, are omitted. Missing upstream details are reported
   explicitly rather than inferred from HTTP 429.
+- A long `Retry-After` ending at the next UTC day, with concurrency and launch
+  capacity available, adds `daily_browser_time` as an explicitly inferred
+  `suspectedLimit`. The diagnostic includes an absolute UTC `retryAt` time.
+  This inference does not turn an unconfirmed quota into a confirmed limit hit.
 - A rejected launch with a confirmed rate limit and a free browser slot is
   retried once after the longer of the account delay and `Retry-After`, plus one
   second, up to a 21-second wait

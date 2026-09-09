@@ -36,6 +36,7 @@ describe("Cloudflare browser response preservation", function suite() {
     { header: "Wed, 09 Sep 2026 12:01:00 GMT", expected: 60_000 },
     { header: "unavailable", expected: null },
     { header: "-1", expected: null },
+    { header: "99999999999999999999", expected: null },
   ])("an unknown launch failure passes Retry-After=$header to the LLM without inventing a limit", async function reportHeaders({ header, expected }) {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-09T12:00:00Z"));
@@ -91,6 +92,38 @@ describe("Cloudflare browser response preservation", function suite() {
         upstreamResponse: { retryAfterMs: 90_000 }, retry: { attempted: false },
       },
     });
+    assert.equal(browser.callTool.mock.calls.length, 1);
+  });
+
+  test.each([
+    { time: "2026-09-09T17:39:29Z", retryAfter: "22831", retryAt: "2026-09-10T00:00:00.000Z", suspected: { limit: "daily_browser_time", confidence: "inferred", evidence: "retry_after_utc_reset" } },
+    { time: "2026-09-09T23:59:30Z", retryAfter: "30", retryAt: "2026-09-10T00:00:00.000Z", suspected: null },
+    { time: "2026-09-09T17:39:29Z", retryAfter: "22800", retryAt: "2026-09-09T23:59:29.000Z", suspected: null },
+  ])("a retry ending at $retryAt reports qualified daily-reset evidence", async function dailyResetEvidence({ time, retryAfter, retryAt, suspected }) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(time));
+    const browser = {
+      listTools: vi.fn<BrowserTools["listTools"]>().mockResolvedValue({ tools: [] }),
+      callTool: vi.fn<BrowserTools["callTool"]>().mockResolvedValue({
+        isError: true, content: [{ type: "text", text: "Error: Unable to create new browser: code: 429: message: Rate limit exceeded" }],
+        structuredContent: { cloudflareBrowserResponse: {
+          source: "cloudflare_browser_run", status: 429, headers: { "retry-after": retryAfter }, headerNames: ["retry-after"],
+        } },
+      }),
+    };
+    const managed = manageBrowserLimits(browser, {
+      async limits() {
+        return { activeSessions: [], maxConcurrentSessions: 4, allowedBrowserAcquisitions: 1, timeUntilNextAllowedBrowserAcquisition: 0 };
+      },
+      async history() { return []; },
+    });
+    const result = CallToolResultSchema.parse(await managed.callTool({ name: "browser_navigate" }));
+    assert.partialDeepStrictEqual(result.structuredContent, {
+      browserLimit: { diagnosis: "unknown", limitsHit: [], suspectedLimit: suspected, upstreamResponse: { retryAt }, retry: { attempted: false } },
+    });
+    const diagnostic = result.content[1];
+    if (diagnostic.type !== "text") throw new Error("Missing text diagnostic");
+    if (suspected) assert.match(diagnostic.text, /suggests the daily browser-time allowance, but Cloudflare did not explicitly name/);
     assert.equal(browser.callTool.mock.calls.length, 1);
   });
 });
