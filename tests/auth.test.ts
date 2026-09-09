@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { parse } from "jsonc-parser";
 import { afterAll, beforeAll, describe, test } from "vitest";
 import { createTestHarness, type Unstable_RawConfig } from "wrangler";
+import { JSONRPCResponseSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const origin = "https://kitesurf.example";
 const ownerKey = "test-only-owner-key";
@@ -169,22 +170,11 @@ describe("owner authorization without login sessions", function suite() {
       protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "kitesurf-test", version: "1.0.0" },
     } }) });
     assert.equal(initialized.status, 200);
-    const session = initialized.headers.get("mcp-session-id");
-    assert.ok(session);
-    const reader = initialized.body!.getReader();
-    const decoder = new TextDecoder();
-    let result = "";
-    try {
-      while (!result.includes('"serverInfo"')) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        result += decoder.decode(value, { stream: true });
-      }
-      assert.match(result, /"serverInfo"/);
-    } finally {
-      await reader.cancel();
-    }
-    await worker.fetch(origin + "/mcp", { method: "DELETE", headers: { Authorization: "Bearer " + fresh.accessToken, "Mcp-Session-Id": session } });
+    assert.equal(initialized.headers.get("mcp-session-id"), null);
+    const initializedBody = JSONRPCResponseSchema.parse(await initialized.json());
+    assert.ok("result" in initializedBody);
+    const result = initializedBody.result;
+    assert.ok(typeof result === "object" && result !== null && "serverInfo" in result);
     assert.equal((await token(grant)).status, 400);
     assert.equal((await worker.fetch(origin + "/mcp", { headers: { Authorization: "Bearer " + fresh.accessToken } })).status, 401);
   });

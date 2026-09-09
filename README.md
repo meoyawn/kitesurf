@@ -133,7 +133,10 @@ removed; deployment does not delete the database automatically.
   cookies or session CSRF tokens are issued or accepted as owner authentication.
 - Rate limits apply to public requests, authentication, and browser tools. These
   operate per Cloudflare location; they are not a global spending cap.
-- Browser sessions have a default 60-second idle timeout. Ask ChatGPT to call
+- The owner shares one browser across MCP connections. Reconnecting or ending
+  an MCP transport does not clear its tabs; use separate tabs for separate pages.
+  Browser actions run in order, including calls from overlapping connections.
+- Browser sessions have a five-minute idle timeout. Ask ChatGPT to call
   `browser_close` when finished. Cloudflare's Free plan provides 10 browser
   minutes per day across the account, including idle time.
 - The home page can revoke all ChatGPT grants with the owner key. KV propagation
@@ -142,6 +145,11 @@ removed; deployment does not delete the database automatically.
 
 The published Playwright dependency expects ArrayBuffer WebSocket messages.
 `no_websocket_standard_binary_type` preserves that behavior on newer Workers.
+
+The patch in `patches/` exposes the dependency's browser server separately from
+its MCP transport and creates each server with its own browser context. A single
+owner Durable Object owns that server; HTTP requests use fresh stateless MCP
+transports. This preserves tabs and snapshot references across client reconnects.
 
 ## Live verification
 
@@ -152,8 +160,10 @@ node --env-file=.env scripts/verify.ts --browser
 This checks public HTTPS, rejected credentials, OAuth discovery, combined key
 entry and consent, same-origin protection, PKCE, token refresh and replay
 rejection, MCP tool discovery, and a real
-navigation/screenshot/close sequence. It revokes its test grant, does not print
-tokens, and uses a small amount of Browser Run allowance. Omit `--browser` to
+navigation/reconnect/snapshot/click/screenshot/close sequence. It verifies both
+page content and a link reference captured before the reconnect. It revokes its
+test grant, does not print tokens, and uses a small amount of Browser Run allowance.
+Omit `--browser` to
 check authentication and tool discovery without launching a browser.
 
 ## References

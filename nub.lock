@@ -4,16 +4,30 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@cloudflare/playwright-mcp@0.0.5':
+    hash: 057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163
+    path: patches/@cloudflare+playwright-mcp@0.0.5.patch
+
 importers:
 
   .:
     dependencies:
+      '@cloudflare/playwright':
+        specifier: 0.0.11
+        version: 0.0.11
       '@cloudflare/playwright-mcp':
         specifier: ^0.0.5
-        version: 0.0.5(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)
+        version: 0.0.5(patch_hash=057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)
       '@cloudflare/workers-oauth-provider':
         specifier: ^0.10.3
         version: 0.10.3
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@3.25.76)
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260908.1
@@ -1889,7 +1903,7 @@ snapshots:
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
-  '@cloudflare/playwright-mcp@0.0.5(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)':
+  '@cloudflare/playwright-mcp@0.0.5(patch_hash=057fd94069992086509cd041439edc597a201813b6230b6a322721903b713163)(@cloudflare/workers-types@5.20260908.1)(react@19.2.8)(zod@3.25.76)':
     dependencies:
       '@cloudflare/playwright': 0.0.11
       '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
