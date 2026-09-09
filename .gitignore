@@ -1,0 +1,17 @@
+node_modules/
+package-lock.json
+.wrangler/
+dist/
+.cloudflare-api-token
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+.secrets/
+.task/
+coverage/
+*.log
+.DS_Store
+worker-configuration.d.ts
+public/auth.js
