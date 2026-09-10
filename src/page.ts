@@ -7,7 +7,7 @@ export function authPage(options: { authorizing?: boolean; origin: string }): Re
 <body><main data-authorizing="${!!options.authorizing}">
 <p class="brand">〰 KITESURF</p><p class="eyebrow">PRIVATE BROWSER MCP</p><h1>${title}</h1>
 <p class="intro">${options.authorizing ? "Enter your private owner key to approve this connection." : "Connect ChatGPT to your private Cloudflare browser."}</p>
-${options.authorizing ? `<section><p>Allow ChatGPT to navigate websites, inspect pages, interact with forms, and take screenshots using your Cloudflare browser quota.</p>`
+${options.authorizing ? `<section><p>Allow ChatGPT to navigate websites, read page content, and interact with links and forms using your private browser.</p>`
 : `<section><label for="endpoint">MCP server URL</label><input id="endpoint" readonly value="${escapeHtml(options.origin)}/mcp">
 <p class="hint">In ChatGPT’s New Plugin dialog, paste this URL and choose <strong>OAuth</strong>. Client ID and client secret can stay blank.</p>
 <p>To revoke all ChatGPT connections, enter your owner key below.</p>`}

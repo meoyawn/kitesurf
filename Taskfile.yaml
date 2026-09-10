@@ -7,9 +7,12 @@ env:
 
 tasks:
   setup:
-    desc: Install dependencies with nub
+    desc: Install packages, pinned submodules, and the WASM toolchain
     run: once
-    cmd: nub i
+    cmds:
+      - git submodule update --init --depth 1
+      - nub i
+      - node scripts/setup-browser.ts
 
   lint:
     desc: Lint TypeScript with Oxlint
@@ -21,16 +24,54 @@ tasks:
     run: once
     cmd: nubx wrangler types
 
+  browser:build:
+    desc: Build the Rust browser, layout and QuickJS in one WebAssembly module
+    run: once
+    sources:
+      - native/Cargo.toml
+      - native/Cargo.lock
+      - native/browser/**/*
+      - native/layout/**/*
+      - vendor/obscura/crates/obscura-render/src/**/*.rs
+      - vendor/obscura/crates/obscura-js/js/bootstrap.js
+      - vendor/obscura/crates/obscura-js/src/write_stream.rs
+      - vendor/obscura/crates/obscura-net/src/pgl_domains.txt
+      - .cargo/config.toml
+      - .wrangler/browser/toolchain.json
+      - rust-toolchain.toml
+      - scripts/build-browser.ts
+      - nub.lock
+    generates:
+      - .wrangler/browser/factory.js
+      - .wrangler/browser/kitesurf_browser_bg.wasm
+      - .wrangler/browser/trackers.js
+    cmd: node scripts/build-browser.ts
+
   tsc:
     desc: Typecheck with TypeScript 7
     run: once
-    deps: [types]
+    deps: [types, browser:build]
     cmd: nubx tsc --noEmit
 
   test:
     desc: Run Vitest
     run: once
+    deps: [browser:build]
     cmd: nubx vitest run
+
+  test:yandex:
+    desc: Verify OAuth, MCP reconnects, and live Yandex 20-to-21 scrolling against local dev
+    deps: [build]
+    env:
+      NODE_EXTRA_CA_CERTS: .secrets/local-cert.pem
+    cmd: node scripts/verify.ts https://localhost:8787 --yandex
+
+  test:sites:
+    desc: Smoke-test live news, reference and documentation pages through local MCP
+    deps: [build]
+    env:
+      NODE_EXTRA_CA_CERTS: .secrets/local-cert.pem
+    cmd: node scripts/verify.ts https://localhost:8787 --sites
 
   check:
     desc: Run lint, typechecking, and tests
@@ -40,6 +81,7 @@ tasks:
   build:
     desc: Bundle the owner authorization client
     run: once
+    deps: [browser:build]
     cmd: nubx esbuild src/auth-client.ts --bundle --format=esm --minify --outfile=public/auth.js
 
   deploy:

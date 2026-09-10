@@ -15,10 +15,9 @@
     "dev": "fish scripts/dev.fish"
   },
   "dependencies": {
-    "@cloudflare/playwright": "0.0.11",
-    "@cloudflare/playwright-mcp": "^0.0.5",
     "@cloudflare/workers-oauth-provider": "^0.10.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "tough-cookie": "6.0.1",
     "zod": "3.25.76"
   },
   "allowBuilds": {
@@ -42,13 +41,9 @@
       "onFail": "ignore"
     }
   },
-  "description": "Private Cloudflare Browser Run MCP with OAuth and owner-key authorization",
+  "description": "Private browser MCP running Obscura and QuickJS inside a Cloudflare Worker",
   "license": "MIT",
   "engines": {
     "node": ">=24"
-  },
-  "patchedDependencies": {
-    "@cloudflare/playwright-mcp@0.0.5": "patches/@cloudflare+playwright-mcp@0.0.5.patch",
-    "@cloudflare/playwright@0.0.11": "patches/@cloudflare+playwright@0.0.11.patch"
   }
 }

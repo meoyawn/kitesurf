@@ -88,7 +88,7 @@ describe("owner authorization without login sessions", function suite() {
     assert.match(html, /<form id="key-form" method="post" action="\/auth\/consent">/);
     assert.match(html, /id="owner-key" type="password"/);
     assert.match(html, /id="consent" type="submit">Allow ChatGPT/);
-    assert.match(html, /Cloudflare browser quota/);
+    assert.match(html, /interact with links and forms using your private browser/);
     assert.doesNotMatch(html, /data-csrf|data-flow|Sign in|Sign out/);
     assert.match(response.headers.get("Content-Security-Policy") ?? "", /frame-ancestors 'none'/);
     const home = await worker.fetch(origin + "/");

@@ -15,3 +15,4 @@ coverage/
 .DS_Store
 worker-configuration.d.ts
 public/auth.js
+native/target/

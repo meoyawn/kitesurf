@@ -1,35 +1,36 @@
 import { DurableObject } from "cloudflare:workers";
-import { endpointURLString, history, limits, sessions } from "@cloudflare/playwright";
-import { createMcpServer } from "@cloudflare/playwright-mcp";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
-import { connectBrowserTools, type BrowserTools } from "./mcp.ts";
-import { manageBrowserLimits } from "./browser-limits.ts";
+import { createBrowserTools } from "./browser-tools.ts";
+import { createPage } from "./browser-engine.ts";
 
 /** The browser outlives individual MCP transports, including client reconnects. */
-export class PlaywrightMCP extends DurableObject<Env> {
-  private browser?: Promise<BrowserTools>;
-
-  private tools(): Promise<BrowserTools> {
-    if (!this.browser) {
-      const endpoint = new URL(endpointURLString(this.env.BROWSER));
-      endpoint.searchParams.set("keep_alive", "60000");
-      this.browser = createMcpServer(endpoint).then(connectBrowserTools).then(browser => manageBrowserLimits(browser, {
-        limits: () => limits(this.env.BROWSER),
-        history: () => history(this.env.BROWSER),
-        sessions: () => sessions(this.env.BROWSER),
-      })).catch(error => {
-        this.browser = undefined;
-        throw error;
-      });
-    }
-    return this.browser;
-  }
+export class BrowserMCP extends DurableObject<Env> {
+  private browser = createBrowserTools(createPage);
+  private busy = 0;
+  private lastActivity = 0;
 
   async listTools() {
-    return (await this.tools()).listTools();
+    return this.browser.listTools();
   }
 
   async callTool(params: CallToolRequest["params"]) {
-    return (await this.tools()).callTool(params);
+    this.busy++;
+    this.lastActivity = Date.now();
+    try {
+      await this.ctx.storage.setAlarm(this.lastActivity + 60_000);
+      return await this.browser.callTool(params);
+    } finally {
+      this.busy--;
+      this.lastActivity = Date.now();
+      await this.ctx.storage.setAlarm(this.lastActivity + 60_000);
+    }
+  }
+
+  async alarm() {
+    if (this.busy || Date.now() - this.lastActivity < 60_000) {
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return;
+    }
+    await this.browser.close();
   }
 }
