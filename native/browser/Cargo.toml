@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 default = ["render", "stealth"]
 render = ["dep:obscura-render"]
 stealth = []
+trace = ["dep:tracing", "dep:serde", "obscura-render?/trace"]
 
 [dependencies]
 rquickjs = { git = "https://github.com/mrchantey/rquickjs", rev = "9d3206c80d3ff2e819abca783a6859e83a5d7b5f", features = ["rust-alloc"] }
@@ -23,3 +24,5 @@ html5ever = "=0.39.0"
 url = "=2.5.8"
 wasm-bindgen = "=0.2.128"
 console_error_panic_hook = "=0.1.7"
+tracing = { version = "=0.1.44", optional = true }
+serde = { version = "=1.0.229", features = ["derive"], optional = true }

@@ -12,7 +12,9 @@ A Durable Object keeps tabs alive across MCP reconnects and serializes actions.
 
 References to `Deno.core.ops` preserve Obscura's upstream browser bootstrap API,
 which originally uses `deno_core`. In this build, a small `Deno` object inside
-QuickJS exposes our Rust callbacks and Worker adapters. Keeping these names
+QuickJS exposes our Rust callbacks and Worker adapters inside private closures.
+`Deno` is absent from page globals so frameworks select their browser runtime.
+Keeping the internal callback names
 minimizes patches to the pinned upstream source. Neither Deno nor V8 is compiled
 into the browser WASM module; Obscura's original runtime remains in the submodule
 but is excluded from this build.
@@ -31,15 +33,24 @@ and memory use are still being tested.
 | `browser_fill` | Set an input, textarea, or select value and dispatch input/change events |
 | `browser_evaluate` | Evaluate a synchronous page JavaScript expression and return JSON |
 | `browser_scroll` | Scroll to a vertical offset or the bottom and process page activity |
-| `browser_wait_for` | Process pending tasks until an expression is truthy, for up to 10 seconds |
+| `browser_wait_for` | Process pending tasks until an expression is truthy; timeout is optional |
 | `browser_status` | Inspect script errors, requests, stealth settings, and allocated WASM memory |
 | `browser_tabs` | List, create, select or close tabs |
 | `browser_close` | Release all tabs, cookies and the WASM instance |
 
 Navigation replaces the selected page while retaining its cookies. Tabs have
-independent page state and cookie sessions. Up to four tabs share one WASM heap;
-closing the last tab releases it. An idle alarm closes all tabs after 60 seconds.
+independent page state and cookie sessions. Tabs share one WASM heap;
+closing the last tab releases it. There is no automatic idle closure or tab quota.
 State lives in memory and can be lost when the isolate restarts.
+
+Navigation, clicks and scrolling process pending downloads, microtasks and
+application tasks before returning. Repeating intervals and rendering callbacks
+run without keeping an otherwise idle action open. Delayed activity can be
+awaited with `browser_wait_for`. There are no application quotas on request
+count, downloaded bytes, snapshot content or action input size. Downloads queue
+behind the platform's six concurrent connections. Wrangler requests Cloudflare's
+maximum configurable CPU and subrequest allowances; account and isolate limits
+still apply. A platform resource failure is reported as a failed action.
 
 ## Stealth and memory
 
@@ -56,27 +67,20 @@ network fingerprint.
 Cloudflare allows **128 MB per isolate**, including the host JavaScript heap and
 all WASM allocations. Concurrent requests in an isolate share that budget. [Cloudflare memory limits](https://developers.cloudflare.com/workers/platform/limits/#memory)
 
-The combined Obscura + QuickJS module passes the live Yandex 20→21 test in local
-workerd with approximately **77 MiB of WASM memory**. The September 10, 2026 build
-includes Binaryen size optimization and native UTF-8 buffer callbacks:
+Tabs share a **96 MiB WASM maximum**. QuickJS's allocation allowance follows
+available shared heap capacity with headroom for native browser work. Ordinary
+DOM calls stay inside WASM and return guest JavaScript values directly. Fetch
+bodies cross separately from metadata, and geometry callbacks return native
+objects without JSON encoding and decoding.
 
-| Measurement | Initial Obscura checkpoint | Optimized build |
-| --- | --- | --- |
-| WASM binary | 3,976,636 bytes | 3,379,953 bytes (15.0% smaller) |
-| WASM gzip | 1,343,945 bytes | 1,297,307 bytes (3.5% smaller) |
-| Yandex WASM memory | 76.9 MiB | 76.9 MiB (80,609,280 bytes; unchanged) |
-
-Tabs share a **96 MiB WASM maximum**, with a 48 MiB QuickJS limit per tab.
-Ordinary DOM calls stay inside WASM and return guest JavaScript values directly.
-
-The first combined build needed roughly 110 MiB. Removing an unused retained CSS
-custom-property cache reduced that peak while keeping CSS inheritance and the
-scrolling test passing. No page styles or scripts were removed for the test.
-Stealth's overhead has not been measured separately. WASM file size, allocated
-WASM memory and total isolate RAM are different measurements; the reported
-memory excludes the Worker JavaScript heap. The live page still reports some
-script errors, so this test demonstrates its required scrolling behavior,
-not full Chromium compatibility. These are local results, not a deployment test.
+Compiled CSS, computed styles and guest geometry objects survive geometry reads.
+Attribute mutations feed Obscura's retained-style invalidation planner; tree,
+stylesheet and unsupported changes trigger a fresh cascade. Changes confined to
+color, opacity or ordinary visibility can preserve geometry when compiled selector
+dependencies allow it, including shadow styles. Inherited CSS variables use structurally shared maps
+instead of copying every variable into every component. WASM file size, allocated
+WASM memory and total isolate RAM are different measurements; reported WASM
+memory excludes the Worker JavaScript heap.
 
 ## Run locally
 
@@ -173,6 +177,9 @@ The test exercises OAuth, MCP reconnects, and creating and closing tabs, then lo
 It requires **20 openings before scrolling and 21 afterward**, with no pagination
 request before scrolling. The page's own JavaScript must fetch the next cursor
 and append one distinct opening while retaining the original 20.
+The action response must already contain all 21 openings. To verify the button
+instead, run `node scripts/verify.ts --yandex --click` with the local certificate
+configured through `NODE_EXTRA_CA_CERTS`.
 
 The test is opt-in because the live site and its vacancy count can change. Successful runs write
 `.wrangler/yandex-result.json`; cleanup closes the browser and revokes the test

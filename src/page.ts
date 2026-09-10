@@ -15,7 +15,7 @@ ${options.authorizing ? `<section><p>Allow ChatGPT to navigate websites, read pa
 <p class="hint">Use the secret saved with your Kitesurf project.</p>
 ${options.authorizing ? `<button id="consent" type="submit">Allow ChatGPT</button><a class="cancel" href="/">Cancel</a>` : `<button id="revoke" type="submit" class="secondary">Revoke ChatGPT access</button>`}
 </form></section>
-<p id="message" role="status" aria-live="polite"></p><footer>OAuth protects every browser request. Browsers close after 60 seconds of inactivity; ask ChatGPT to close the browser when finished.</footer>
+<p id="message" role="status" aria-live="polite"></p><footer>OAuth protects every browser request. Ask ChatGPT to close the browser when finished.</footer>
 </main></body></html>`;
   return new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
     "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" } });

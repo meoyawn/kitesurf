@@ -15,7 +15,6 @@ const provider = new OAuthProvider<AuthEnv>({
         props.userId !== "owner" || !Array.isArray(props.scope) || !props.scope.includes(SCOPE)) {
         return json({ error: "insufficient_scope" }, 403, { "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${SCOPE}"` });
       }
-      if (!(await workerEnv.MCP_RATE_LIMIT.limit({ key: "owner" })).success) return json({ error: "Too many browser requests." }, 429, { "Retry-After": "60" });
       if (new URL(request.url).pathname !== "/mcp") return json({ error: "Not found" }, 404);
       const browser = workerEnv.MCP_OBJECT.get(workerEnv.MCP_OBJECT.idFromName(props.userId));
       return mcpFetch(request, browser);
@@ -67,12 +66,12 @@ export default {
       if (url.origin !== workerEnv.PUBLIC_ORIGIN) return json({ error: "Use the configured Kitesurf HTTPS origin." }, 421);
       if (!workerEnv.OWNER_KEY_HASH) return json({ error: "Owner authentication has not been configured." }, 503);
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      if (!(await workerEnv.PUBLIC_RATE_LIMIT.limit({ key: ip })).success) return json({ error: "Too many requests." }, 429, { "Retry-After": "60" });
+      if (url.pathname !== "/mcp" && !(await workerEnv.PUBLIC_RATE_LIMIT.limit({ key: ip })).success) return json({ error: "Too many requests." }, 429, { "Retry-After": "60" });
       if (request.method === "POST" && !url.pathname.startsWith("/mcp")) {
         if (!(await workerEnv.AUTH_RATE_LIMIT.limit({ key: ip })).success) return json({ error: "Too many authentication attempts. Try again in one minute." }, 429, { "Retry-After": "60" });
       }
       let forwarded: Request = request;
-      if (request.method === "POST") {
+      if (request.method === "POST" && url.pathname !== "/mcp") {
         const buffer = await boundedBody(request, 65536);
         if (!buffer) return json({ error: "Request body too large." }, 413);
         forwarded = new Request(request, { body: new Uint8Array(buffer).buffer });

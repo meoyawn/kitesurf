@@ -14,7 +14,7 @@ export function browserUrl(value: string, base?: string): URL {
 /** Cookies and response bodies belong to one browser session, never the Worker environment. */
 export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new CookieJar()) {
   const controller = new AbortController();
-  const events: { url: string; method: string; status: number; bytes: number }[] = [];
+  const events: { url: string; method: string; status: number; bytes: number; queueMs: number; transferMs: number }[] = [];
   let requests = 0;
   let downloadedBytes = 0;
   let blockedRequests = 0;
@@ -29,7 +29,8 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
     credentials?: string;
     mode?: string;
   } = {}) {
-    if (++requests > 200) throw new Error("Page exceeded 200 network requests; navigate again to reset");
+    const queued = performance.now();
+    requests++;
     let url = browserUrl(value);
     let method = (options.method || "GET").toUpperCase();
     if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(method)) throw new Error("Unsupported HTTP method");
@@ -39,11 +40,13 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
     headers.delete("cookie");
     headers.set("user-agent", browserUserAgent);
     if (options.origin && options.mode === "cors") headers.set("origin", options.origin);
-    if (active >= 4) await new Promise<void>(function queued(resolve) { waiting.push(resolve); });
+    // Workers permits six simultaneous outgoing connections. Queue excess work without dropping it.
+    if (active >= 6) await new Promise<void>(function queued(resolve) { waiting.push(resolve); });
     else active++;
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+    const queueMs = performance.now() - queued;
+    const signal = controller.signal;
     try {
-      for (let redirects = 0; redirects <= 10; redirects++) {
+      for (let redirects = 0; redirects <= 20; redirects++) {
         signal.throwIfAborted();
         if (isTracker(url.hostname)) {
           blockedRequests++;
@@ -55,15 +58,14 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
         }) : "";
         if (cookie) headers.set("cookie", cookie);
         else headers.delete("cookie");
+        const started = performance.now();
         const response = await fetcher(url, {
           method, headers, body: method === "GET" || method === "HEAD" ? undefined : body as BodyInit,
           redirect: "manual", signal,
         });
         if (withCookies) {
           for (const cookie of response.headers.getSetCookie()) {
-            if (cookie.length <= 4096 && (jar.serializeSync()?.cookies?.length || 0) < 200) {
-              jar.setCookieSync(cookie, url.href, { ignoreError: true });
-            }
+            jar.setCookieSync(cookie, url.href, { ignoreError: true });
           }
         }
         const location = response.headers.get("location");
@@ -77,11 +79,8 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
           url = next;
           continue;
         }
-        if (Number(response.headers.get("content-length")) > 4 * 1024 * 1024) {
-          await response.body?.cancel();
-          throw new Error("Response exceeds 4 MiB");
-        }
-        const chunks = [];
+        const chunks: string[] = [];
+        const decoder = new TextDecoder();
         let length = 0;
         const reader = response.body?.getReader();
         try {
@@ -90,18 +89,13 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
             if (done) break;
             length += value.byteLength;
             downloadedBytes += value.byteLength;
-            if (length > 4 * 1024 * 1024 || downloadedBytes > 24 * 1024 * 1024) {
-              throw new Error("Page exceeded its response (4 MiB) or download (24 MiB) limit");
-            }
-            chunks.push(value);
+            chunks.push(decoder.decode(value, { stream: true }));
           }
         } finally {
           await reader?.cancel();
         }
-        const bytes = new Uint8Array(length);
-        let offset = 0;
-        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-        events.push({ url: url.href, method, status: response.status, bytes: length });
+        chunks.push(decoder.decode());
+        events.push({ url: url.href, method, status: response.status, bytes: length, queueMs, transferMs: performance.now() - started });
         if (events.length > 100) events.shift();
         const responseHeaders = new Headers(response.headers);
         responseHeaders.delete("set-cookie");
@@ -112,7 +106,7 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
             options.credentials === "include" && response.headers.get("access-control-allow-credentials") !== "true");
         return {
           url: url.href, status: response.status, headers: Object.fromEntries(responseHeaders),
-          body: corsBlocked ? "" : new TextDecoder().decode(bytes), redirected: redirects > 0,
+          body: corsBlocked ? "" : chunks.join(""), redirected: redirects > 0,
           ...(corsBlocked ? { corsBlocked: true, corsError: "Origin not allowed by response" } : {}),
         };
       }
@@ -128,9 +122,7 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
     download,
     cookies(url: string) { return jar.getCookieStringSync(url, { http: false }); },
     setCookie(value: string, url: string) {
-      if (value.length <= 4096 && (jar.serializeSync()?.cookies?.length || 0) < 200) {
-        jar.setCookieSync(value, url, { http: false, ignoreError: true });
-      }
+      jar.setCookieSync(value, url, { http: false, ignoreError: true });
     },
     diagnostics() { return { requests, downloadedBytes, blockedRequests, pending: active + waiting.length, events: events.slice() }; },
     next() { controller.abort(); return createBrowserNetwork(fetcher, jar); },

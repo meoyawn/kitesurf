@@ -1,9 +1,8 @@
 use super::ObscuraState;
 use obscura_dom::NodeId;
-use obscura_render::{Rect, layout_dom};
+use obscura_render::{AttributeStyleMutation, Rect, RetainedStyleMutation};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use wasm_bindgen::prelude::*;
 
 const VIEWPORT: (f32, f32) = (1280.0, 720.0);
 
@@ -37,13 +36,33 @@ impl BoxGeometry {
 }
 
 impl ObscuraState {
+    pub(super) fn style_mutation(&self, command: &str, id: NodeId, _other: NodeId, value: &str) -> Option<RetainedStyleMutation> {
+        Some(match command {
+            "set_attribute" | "remove_attribute" => {
+                let (name, new_value) = if command == "set_attribute" {
+                    let (name, value) = value.split_once('\0')?;
+                    (name, Some(value.to_owned()))
+                } else { (value, None) };
+                AttributeStyleMutation { node: id, name: name.into(), old_value: self.attribute(id, name), new_value }.into()
+            }
+            // A tree rebuild gets a fresh cascade. Expanding sibling scopes for
+            // every intermediate mutation is quadratic during framework hydration.
+            _ => return None,
+        })
+    }
+
+    #[cfg_attr(feature = "trace", tracing::instrument(name = "layout.geometry", skip_all))]
     fn with_layout<T>(&self, read: impl FnOnce(&LayoutCache) -> T) -> T {
         let mut cache = self.layout.borrow_mut();
         let layout = cache.get_or_insert_with(|| {
-            let laid = layout_dom(&self.tree, VIEWPORT);
+            #[cfg(feature = "trace")]
+            let _span = tracing::info_span!("layout.rebuild").entered();
+            let started = js_sys::Date::now();
+            let mut styles = self.styles.borrow_mut();
+            let mut laid = styles.layout(&self.tree, VIEWPORT);
             let size = laid.scrolling_content_size(&self.tree, VIEWPORT);
             let fixed = laid.viewport_fixed_nodes(&self.tree);
-            // Keep only geometry consumed by browser APIs, releasing the cascade and text runs.
+            // Keep browser geometry and move computed styles back to the next layout.
             let boxes = laid.rects.iter().map(|(id, rect)| {
                 let style = laid.styles.get(id);
                 let border = style.map(|style| style.border).unwrap_or_default();
@@ -56,6 +75,9 @@ impl ObscuraState {
                     fixed: fixed.contains(id),
                 })
             }).collect();
+            styles.retain(&mut laid);
+            self.layout_count.set(self.layout_count.get() + 1);
+            self.layout_millis.set(self.layout_millis.get() + js_sys::Date::now() - started);
             LayoutCache { boxes, size }
         });
         read(layout)
@@ -63,32 +85,27 @@ impl ObscuraState {
 }
 
 impl ObscuraState {
-    pub fn geometry(&self, id: u32) -> String {
+    pub fn geometry_epoch(&self) -> u64 { self.geometry_epoch.get() }
+    pub fn geometry(&self, id: u32) -> Value {
         self.with_layout(|layout| {
-            layout.boxes.get(&NodeId::new(id)).map(|geometry| geometry.value(self.scroll.get()).to_string()).unwrap_or_default()
+            layout.boxes.get(&NodeId::new(id)).map(|geometry| geometry.value(self.scroll.get())).unwrap_or(Value::Null)
         })
     }
-    pub fn intersections(&self, ids: &str) -> Result<String, JsError> {
-        let ids: Vec<u32> = serde_json::from_str(ids).map_err(|error| JsError::new(&error.to_string()))?;
-        Ok(json!(self.with_layout(|layout| ids.into_iter().map(|id| {
-            layout.boxes.get(&NodeId::new(id)).map(|geometry| geometry.value(self.scroll.get())).unwrap_or(Value::Null)
-        }).collect::<Vec<_>>())).to_string())
-    }
-    pub fn metrics(&self) -> String {
+    pub fn metrics(&self) -> Value {
         self.with_layout(|layout| json!({
             "scrollWidth": layout.size.0, "scrollHeight": layout.size.1,
             "clientWidth": VIEWPORT.0, "clientHeight": VIEWPORT.1,
-        }).to_string())
+        }))
     }
-    pub fn scroll_to(&self, x: f32, y: f32) -> String {
+    pub fn scroll_to(&self, x: f32, y: f32) -> Value {
         let offset = self.with_layout(|layout| (
             if x.is_finite() { x.clamp(0.0, (layout.size.0 - VIEWPORT.0).max(0.0)) } else { 0.0 },
             if y.is_finite() { y.clamp(0.0, (layout.size.1 - VIEWPORT.1).max(0.0)) } else { 0.0 },
         ));
-        self.scroll.set(offset);
-        json!({"x": offset.0, "y": offset.1}).to_string()
+        if self.scroll.replace(offset) != offset { self.geometry_epoch.set(self.geometry_epoch.get() + 1); }
+        json!({"x": offset.0, "y": offset.1})
     }
-    pub fn scroll_offset(&self) -> String {
+    pub fn scroll_offset(&self) -> Value {
         let (x, y) = self.scroll.get();
         self.scroll_to(x, y)
     }
