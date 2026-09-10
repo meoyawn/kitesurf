@@ -10,6 +10,13 @@ in the same Rust WASM module. Rust owns the browser, DOM callbacks, script loadi
 promises and timers; the Worker supplies networking and platform services.
 A Durable Object keeps tabs alive across MCP reconnects and serializes actions.
 
+References to `Deno.core.ops` preserve Obscura's upstream browser bootstrap API,
+which originally uses `deno_core`. In this build, a small `Deno` object inside
+QuickJS exposes our Rust callbacks and Worker adapters. Keeping these names
+minimizes patches to the pinned upstream source. Neither Deno nor V8 is compiled
+into the browser WASM module; Obscura's original runtime remains in the submodule
+but is excluded from this build.
+
 The goal is a small browser with low memory use. Web API and CSS support are
 incomplete, and there is no pixel rendering or screenshot tool. Site compatibility
 and memory use are still being tested.
