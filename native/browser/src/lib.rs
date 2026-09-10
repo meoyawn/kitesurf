@@ -1,4 +1,6 @@
 mod bridge;
+#[cfg(feature = "trace")]
+mod trace;
 mod runtime;
 mod memory;
 

@@ -11,7 +11,7 @@ function run(command: string, args: string[]) {
   if (result.status !== 0) throw new Error(`${command} failed`);
 }
 
-run("cargo", ["build", "--manifest-path", "native/Cargo.toml", "--locked", "--release", "--target", "wasm32-unknown-unknown"]);
+run("cargo", ["build", "--manifest-path", "native/Cargo.toml", "--locked", "--release", "--target", "wasm32-unknown-unknown", ...(process.env.KITESURF_TRACE === "1" ? ["--features", "trace"] : [])]);
 await mkdir(".wrangler/browser", { recursive: true });
 // Publish complete files only; Wrangler watches these imports during local rebuilds.
 const staging = await mkdtemp(".wrangler/browser-build-");
@@ -21,7 +21,7 @@ try {
   await writeFile(join(staging, "trackers.d.ts"), "declare const domains: string;\nexport default domains;\n");
   run("wasm-bindgen", ["native/target/wasm32-unknown-unknown/release/kitesurf_browser.wasm", "--target", "web", "--out-dir", staging]);
   const wasm = join(staging, "kitesurf_browser_bg.wasm");
-  run("wasm-opt", [wasm, "-Oz", "--enable-bulk-memory", "--enable-reference-types", "--enable-multivalue", "--enable-sign-ext", "--enable-nontrapping-float-to-int", "--strip-debug", "-o", wasm]);
+  run("wasm-opt", [wasm, "-O3", "--enable-bulk-memory", "--enable-reference-types", "--enable-multivalue", "--enable-sign-ext", "--enable-nontrapping-float-to-int", process.env.KITESURF_PROFILE === "1" ? "-g" : "--strip-debug", "-o", wasm]);
   const source = await readFile(join(staging, "kitesurf_browser.js"), "utf8");
   /* Each browser gets its own Wasm instance, heap, globals, and generated binding caches. */
   await writeFile(join(staging, "factory.js"), `export function createBindings() {\n${source.replace(/^export \{[^}]*\};?$/gm, "").replace(/^export default /gm, "").replace(/^export /gm, "")}\nreturn { BrowserTab, initSync };\n}\n`);

@@ -28,6 +28,14 @@ pub struct ObscuraState {
     layout: RefCell<Option<layout::LayoutCache>>,
     #[cfg(feature = "render")]
     scroll: Cell<(f32, f32)>,
+    #[cfg(feature = "render")]
+    layout_count: Cell<u32>,
+    #[cfg(feature = "render")]
+    layout_millis: Cell<f64>,
+    #[cfg(feature = "render")]
+    geometry_epoch: Cell<u64>,
+    #[cfg(feature = "render")]
+    styles: RefCell<obscura_render::LayoutState>,
 }
 
 fn node(value: &str) -> NodeId {
@@ -101,12 +109,30 @@ impl ObscuraState {
             layout: RefCell::default(),
             #[cfg(feature = "render")]
             scroll: Cell::new((0.0, 0.0)),
+            #[cfg(feature = "render")]
+            layout_count: Cell::new(0),
+            #[cfg(feature = "render")]
+            layout_millis: Cell::new(0.0),
+            #[cfg(feature = "render")]
+            geometry_epoch: Cell::new(0),
+            #[cfg(feature = "render")]
+            styles: RefCell::default(),
         }
     }
     pub fn nodes(&self) -> usize { self.tree.len() }
+    pub fn layout_stats(&self) -> Value {
+        #[cfg(feature = "render")]
+        { json!({"count":self.layout_count.get(),"milliseconds":self.layout_millis.get()}) }
+        #[cfg(not(feature = "render"))]
+        { Value::Null }
+    }
     pub fn script_start(&self, id: u32) -> bool { self.started.borrow_mut().insert(NodeId::new(id)) }
     pub fn shadow_attach(&self, id: u32, mode: &str) -> i32 {
         self.layout.borrow_mut().take();
+        #[cfg(feature = "render")]
+        self.styles.borrow_mut().invalidate(None);
+        #[cfg(feature = "render")]
+        self.geometry_epoch.set(self.geometry_epoch.get() + 1);
         let mode = if mode == "open" { ShadowRootMode::Open } else { ShadowRootMode::Closed };
         self.tree.attach_shadow_root(NodeId::new(id), mode).map_or(-1, |root| root.raw() as i32)
     }
@@ -126,8 +152,10 @@ impl ObscuraState {
         let affects_layout = match command {
             "document_write" => true,
             "append_child" | "insert_before" => dom.is_connected(id) || dom.is_connected(other),
-            _ => dom.is_connected(id) && (command.starts_with("set_") || command.starts_with("remove_")),
+            _ => (command.starts_with("set_") || command.starts_with("remove_")) && dom.is_connected(id),
         };
+        #[cfg(feature = "render")]
+        let mutation = if affects_layout { self.style_mutation(command, id, other, second) } else { None };
         let value = match command {
             "document_node_id" => reference(Some(dom.document())),
             "document_url" => json!(self.url),
@@ -207,6 +235,12 @@ impl ObscuraState {
                 .map(|attrs| attrs.iter().map(|attr| attr.qualified_name()).collect::<Vec<_>>())
                 .unwrap_or_default()).unwrap_or_default()),
             "set_attribute" | "set_attribute_ns" | "remove_attribute" | "remove_attribute_ns" => {
+                if command == "set_attribute" {
+                    if let Some((name, value)) = second.split_once('\0') {
+                        if self.attribute(id, name).as_deref() == Some(value) { return Ok(json!(true)); }
+                    }
+                }
+                if command == "remove_attribute" && self.attribute(id, second).is_none() { return Ok(json!(true)); }
                 let old_id = self.attribute(id, "id");
                 dom.with_node_mut(id, |n| match command {
                     "set_attribute" => if let Some((name, value)) = second.split_once('\0') { n.set_attribute(name, value.into()); },
@@ -241,6 +275,7 @@ impl ObscuraState {
                 json!(had_parent && dom.with_node(id, |n| n.parent.is_none()).unwrap_or(false))
             }
             "set_text_content" => {
+                if dom.text_content(id) == second { return Ok(json!(true)); }
                 dom.with_node_mut(id, |n| match &mut n.data {
                     NodeData::Text { contents } | NodeData::Comment { contents } => *contents = second.into(),
                     NodeData::ProcessingInstruction { data, .. } => *data = second.into(),
@@ -297,7 +332,19 @@ impl ObscuraState {
             _ => return Err(format!("Unsupported DOM operation: {command}")),
         };
         if affects_layout {
-            self.layout.borrow_mut().take();
+            #[cfg(feature = "render")]
+            let kept_geometry = self.layout.borrow().is_some() && mutation.as_ref().is_some_and(|mutation| self.styles.borrow().keeps_geometry(mutation));
+            #[cfg(not(feature = "render"))]
+            let kept_geometry = false;
+            #[cfg(feature = "trace")]
+            let _span = tracing::info_span!("layout.invalidate", command, node = id.raw(), argument = second.split('\0').next().unwrap_or_default(), kept_geometry).entered();
+            if !kept_geometry {
+                self.layout.borrow_mut().take();
+                #[cfg(feature = "render")]
+                self.geometry_epoch.set(self.geometry_epoch.get() + 1);
+            }
+            #[cfg(feature = "render")]
+            self.styles.borrow_mut().invalidate(if kept_geometry { None } else { mutation });
         }
         Ok(value)
     }

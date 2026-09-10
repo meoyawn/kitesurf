@@ -185,14 +185,18 @@ try {
         return response.result.structuredContent.result;
       }
       const started = performance.now();
-      await tool("browser_navigate", { url });
+      const navigated = await tool("browser_navigate", { url });
+      const navigationMs = Math.round(performance.now() - started);
       const before = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
       assert.equal(before.length, 20, "Expected exactly 20 openings before scrolling");
       const beforeStatus = await tool("browser_status");
       assert.ok(!beforeStatus.network.events.some((event: { url: string }) => event.url.includes("cursor=")), "Pagination ran before scrolling");
       const scrollStarted = performance.now();
-      await tool("browser_scroll", { bottom: true });
-      await tool("browser_wait_for", { expression: "document.querySelectorAll(" + JSON.stringify(selector) + ").length===21", timeout: 10_000 });
+      const click = process.argv.includes("--click");
+      const button = navigated.elements.find((element: { tag: string; text: string }) => element.tag === "button" && element.text.includes("Показать ещё"));
+      const acted = await tool(click ? "browser_click" : "browser_scroll", click ? { ref: button?.ref } : { bottom: true });
+      const actionMs = Math.round(performance.now() - scrollStarted);
+      assert.equal(acted.elements.filter((element: { href?: string }) => /\/jobs\/vacancies\/[^/?]+-\d+/.test(element.href || "")).length, 21, "Action returned before all openings loaded");
       const after = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
       assert.equal(after.length, 21);
       assert.equal(new Set(after.map(job => job.href)).size, 21, "Expected 21 distinct jobs");
@@ -203,12 +207,13 @@ try {
       assert.ok(status.network.events.some((event: { url: string; status: number }) => event.url.includes("cursor=") && event.status === 200), "Page did not fetch its next cursor");
       const report = {
         before: before.length, after: after.length, added,
-        elapsedMs: Math.round(performance.now() - started), scrollMs: Math.round(performance.now() - scrollStarted),
+        elapsedMs: Math.round(performance.now() - started), navigationMs, actionMs, action: click ? "click" : "scroll",
         wasmMemoryBytes: status.wasmMemoryBytes, requests: status.network.requests, scriptErrors: status.errors,
         quickJsUsedBytes: status.quickJsUsedBytes, rustHeapUsedBytes: status.rustHeapUsedBytes,
+        runtime: status.runtime, waits: status.waits, waitTimings: status.waitTimings, timings: status.timings,
       };
       writeFileSync(new URL("../.wrangler/yandex-result.json", import.meta.url), JSON.stringify(report, null, 2) + "\n");
-      console.log("PASS: live Yandex 20→21 after scrolling. " + JSON.stringify(report));
+      console.log("PASS: live Yandex 20→21 in one action. " + JSON.stringify(report));
     }
     if (useSites) {
       const cases = [

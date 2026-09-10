@@ -3,17 +3,17 @@ import type { CallToolRequest, CallToolResult, Tool } from "@modelcontextprotoco
 import type { BrowserPage } from "./browser-runtime.ts";
 import { browserUrl, createBrowserNetwork, type BrowserNetwork } from "./browser-network.ts";
 
-const target = { selector: z.string().min(1).max(2048).optional(), ref: z.number().int().nonnegative().optional() };
+const target = { selector: z.string().min(1).optional(), ref: z.number().int().nonnegative().optional() };
 const schemas = {
-  browser_navigate: z.object({ url: z.string().url().max(8192) }).strict(),
+  browser_navigate: z.object({ url: z.string().url() }).strict(),
   browser_snapshot: z.object({}).strict(),
   browser_click: z.object(target).strict(),
-  browser_fill: z.object({ ...target, text: z.string().max(64 * 1024) }).strict(),
-  browser_evaluate: z.object({ expression: z.string().min(1).max(64 * 1024) }).strict(),
+  browser_fill: z.object({ ...target, text: z.string() }).strict(),
+  browser_evaluate: z.object({ expression: z.string().min(1) }).strict(),
   browser_scroll: z.object({ y: z.number().finite().optional(), bottom: z.boolean().optional() }).strict(),
-  browser_wait_for: z.object({ expression: z.string().min(1).max(64 * 1024), timeout: z.number().int().min(0).max(10_000).default(5000) }).strict(),
+  browser_wait_for: z.object({ expression: z.string().min(1), timeout: z.number().int().min(0).optional() }).strict(),
   browser_status: z.object({}).strict(),
-  browser_tabs: z.object({ action: z.enum(["list", "new", "select", "close"]), id: z.number().int().positive().optional(), url: z.string().url().max(8192).optional() }).strict(),
+  browser_tabs: z.object({ action: z.enum(["list", "new", "select", "close"]), id: z.number().int().positive().optional(), url: z.string().url().optional() }).strict(),
   browser_close: z.object({}).strict(),
 };
 const targetProperties = { selector: { type: "string", description: "CSS selector" }, ref: { type: "integer", description: "Node reference from a snapshot" } };
@@ -24,9 +24,9 @@ const definitions: { name: keyof typeof schemas; description: string; properties
   { name: "browser_fill", description: "Fill an input, textarea or select by ref or CSS selector; dispatch input/change events.", properties: { ...targetProperties, text: { type: "string" } }, required: ["text"] },
   { name: "browser_evaluate", description: "Evaluate a synchronous JavaScript expression in the page; returns JSON. Use browser_wait_for for asynchronous page activity.", properties: { expression: { type: "string" } }, required: ["expression"] },
   { name: "browser_scroll", description: "Scroll to a vertical offset or traverse to the bottom; process intersection observers and asynchronous page work.", properties: { y: { type: "number" }, bottom: { type: "boolean" } } },
-  { name: "browser_wait_for", description: "Run pending page tasks until a synchronous expression is truthy or timeout expires (milliseconds, max 10000).", properties: { expression: { type: "string" }, timeout: { type: "integer", minimum: 0, maximum: 10000 } }, required: ["expression"] },
+  { name: "browser_wait_for", description: "Run pending page tasks until a synchronous expression is truthy. An optional timeout is in milliseconds; no timeout is imposed by default.", properties: { expression: { type: "string" }, timeout: { type: "integer", minimum: 0 } }, required: ["expression"] },
   { name: "browser_status", description: "Inspect the open page, recent script errors, requests and allocated WASM memory without opening a browser." },
-  { name: "browser_tabs", description: "List, create, select or close tabs. New requires url; select and close require id. Up to four tabs share the browser memory budget.", properties: { action: { type: "string", enum: ["list", "new", "select", "close"] }, id: { type: "integer" }, url: { type: "string" } }, required: ["action"] },
+  { name: "browser_tabs", description: "List, create, select or close tabs. New requires url; select and close require id. Tabs share the browser's WASM memory.", properties: { action: { type: "string", enum: ["list", "new", "select", "close"] }, id: { type: "integer" }, url: { type: "string" } }, required: ["action"] },
   { name: "browser_close", description: "Release all tabs, cookies and the WASM instance. Close when browsing is finished." },
 ];
 const tools: Tool[] = definitions.map(function tool(definition) {
@@ -53,7 +53,6 @@ export function createBrowserTools(makePage: (url: string, html: string, network
   let pending: Promise<unknown> = Promise.resolve();
 
   function newTab() {
-    if (tabs.size >= 4) throw new Error("Close a tab before opening another (maximum four)");
     tab = { id: ++nextId };
     tabs.set(tab.id, tab);
     return tab;
@@ -91,14 +90,13 @@ export function createBrowserTools(makePage: (url: string, html: string, network
     if (!tab?.page) return { open: false };
     return tab.page.snapshot();
   }
-  async function finish() {
-    await tab?.page?.settle(1500);
-    for (let count = 0; count < 5; count++) {
+  async function finish(settle = true) {
+    if (settle) await tab?.page?.settle();
+    while (true) {
       const navigation = tab?.page?.takeNavigation();
       if (!navigation) return;
       await navigate(navigation.url, navigation.method, navigation.body);
     }
-    throw new Error("Page exceeded five script navigations");
   }
   async function call(params: CallToolRequest["params"]): Promise<CallToolResult> {
     try {
@@ -109,7 +107,7 @@ export function createBrowserTools(makePage: (url: string, html: string, network
       tab?.page?.begin();
       let output: unknown;
       switch (name) {
-        case "browser_navigate": await navigate(schemas.browser_navigate.parse(args).url); await finish(); output = snapshot(); break;
+        case "browser_navigate": await navigate(schemas.browser_navigate.parse(args).url); await finish(false); output = snapshot(); break;
         case "browser_snapshot": output = snapshot(); break;
         case "browser_click":
           current().evaluate("(()=>{const el=" + element(schemas.browser_click.parse(args)) + ";if(!el||!el.isConnected)throw Error('Element missing or stale');el.click();return true})()");
@@ -125,17 +123,17 @@ export function createBrowserTools(makePage: (url: string, html: string, network
           if (input.bottom) {
             const destination = Number(current().evaluate("Math.max(0,document.documentElement.scrollHeight-innerHeight)"));
             let position = Number(current().evaluate("scrollY"));
-            for (let step = 0; step < 100 && position < destination; step++) {
+            while (position < destination) {
               position = Math.min(destination, position + 576);
               current().evaluate("scrollTo(0," + position + ")");
-              await current().settle(50);
+              await current().settle(17);
             }
           } else current().evaluate("scrollTo(0," + String(input.y ?? 720) + ")");
           await finish(); output = snapshot(); break;
         }
         case "browser_wait_for": {
           const input = schemas.browser_wait_for.parse(args);
-          const deadline = Date.now() + input.timeout;
+          const deadline = input.timeout === undefined ? Infinity : Date.now() + input.timeout;
           while (!current().evaluate(input.expression)) {
             if (Date.now() >= deadline) throw new Error("Timed out waiting for expression");
             await current().settle(Math.min(100, Math.max(1, deadline - Date.now())));
@@ -147,7 +145,7 @@ export function createBrowserTools(makePage: (url: string, html: string, network
           if (input.action === "new") {
             if (!input.url) throw new Error("New tab requires url");
             browserUrl(input.url);
-            newTab(); await navigate(input.url); await finish();
+            newTab(); await navigate(input.url); await finish(false);
           } else if (input.action !== "list") {
             if (!input.id || !tabs.has(input.id)) throw new Error("Select/close requires an existing tab id");
             if (input.action === "close") await closeTab(input.id);
@@ -162,7 +160,7 @@ export function createBrowserTools(makePage: (url: string, html: string, network
       return { content: [{ type: "text", text: JSON.stringify(output) }], structuredContent: { result: output } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (error instanceof WebAssembly.RuntimeError || /instruction budget|interrupted|out of memory|WASM runtime failed/i.test(message)) await close();
+      if (error instanceof WebAssembly.RuntimeError || /instruction budget|interrupted|out of memory|WASM runtime failed|Cloudflare could not finish/i.test(message)) await close();
       return { isError: true, content: [{ type: "text", text: message }] };
     }
   }

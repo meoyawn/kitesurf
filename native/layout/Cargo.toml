@@ -6,9 +6,12 @@ license = "Apache-2.0"
 
 [features]
 paint = []
+trace = ["dep:tracing"]
 
 [dependencies]
 obscura-dom = { git = "https://github.com/h4ckf0r0day/obscura", rev = "727cc46d56290995245fbe790caed52fc699452a" }
 taffy = { git = "https://github.com/h4ckf0r0day/obscura", rev = "727cc46d56290995245fbe790caed52fc699452a" }
 cssparser = "=0.34.0"
 web-time = "=1.1.0"
+im-rc = "=15.1.0"
+tracing = { version = "=0.1.44", optional = true }
