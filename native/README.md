@@ -31,9 +31,12 @@ head did not compile with its generated bindings in this experiment.
 
 ## Reviewed adapters
 
-- `browser/build.rs` embeds the pinned bootstrap and replaces one asserted
-  `JSON.parse(_dom(...))` call with the native callback result. Mutation
-  bookkeeping retains the bootstrap's string-boolean convention.
+- `browser/build.rs` embeds the pinned bootstrap and replaces its DOM JSON
+  parsing with native callback results. UTF-8 encoding and decoding use native
+  typed-buffer callbacks instead of per-character JavaScript allocations;
+  legacy encodings retain the Worker decoder. Mutation bookkeeping retains
+  the bootstrap's string-boolean convention. Each substitution is asserted
+  against the pinned source.
 - `browser/src/bridge.rs` translates bootstrap operations to the DOM crate's
   public API. The pinned document-write parser is included by path from the
   submodule. No parser, selector engine or upstream JS runtime is copied.
@@ -72,9 +75,14 @@ Workers `fetch` controls TLS; native Obscura TLS impersonation is unavailable.
 ## Setup
 
 `task setup` initializes the submodule, installs JS packages with nub, ensures
-the pinned Rust target and wasm-bindgen CLI, obtains LLVM through pinned pkgx,
-verifies/downloads the pinned WASI sysroot and fetches locked Cargo dependencies.
+the pinned Rust target and wasm-bindgen CLI, obtains LLVM and Binaryen 132
+through pinned pkgx, verifies/downloads the pinned WASI sysroot and fetches
+locked Cargo dependencies.
 Toolchain paths live only in ignored configuration. CI calls `task setup`.
-`task browser:build` compiles with `--locked`; `task check` builds before tests.
+`task browser:build` compiles with `--locked`, runs `wasm-opt -Oz`, then publishes
+complete assets with atomic file renames so local reloads cannot read a partial
+WASM binary. `task check` builds before tests.
 The opt-in `task test:yandex` runs OAuth/MCP and live 20→21 scrolling in local
 workerd, including the assertion that pagination starts only after scrolling.
+`task test:sites` checks readable content and selectors on Hacker News,
+Wikipedia and MDN; these smoke tests do not establish full site compatibility.

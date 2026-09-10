@@ -1,5 +1,5 @@
 use crate::bridge::ObscuraState;
-use rquickjs::{Array, Context, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, Promise, Runtime, Value, context::EvalOptions, function::{Func, Rest}};
+use rquickjs::{Array, Context, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, Promise, Runtime, TypedArray, Value, context::EvalOptions, function::{Func, Rest}};
 use serde_json::{Value as Json, json};
 use std::{cell::{Cell, RefCell}, collections::{BTreeMap, HashMap, VecDeque}, rc::Rc};
 use wasm_bindgen::prelude::*;
@@ -71,6 +71,26 @@ fn call_host<'js>(ctx: Ctx<'js>, name: String, serialized: String) -> rquickjs::
     let result = shared_state(&ctx).host.call2(&JsValue::NULL, &name.into(), &serialized.into())
         .map_err(|error| thrown(&ctx, error.as_string().unwrap_or_else(|| "Worker host call failed".into())))?;
     ctx.json_parse(result.as_string().ok_or_else(|| thrown(&ctx, "Invalid host response"))?)
+}
+// Typed buffers keep UTF-8 conversion and its transient allocations inside WASM.
+fn text_encode<'js>(ctx: Ctx<'js>, text: String) -> rquickjs::Result<TypedArray<'js, u8>> {
+    // QuickJS owns the buffer, so it remains covered by the guest's memory limit.
+    TypedArray::new_copy(ctx, text.as_bytes())
+}
+fn text_decode<'js>(ctx: Ctx<'js>, encoding: String, input: TypedArray<'js, u8>, fatal: bool, ignore_bom: bool) -> rquickjs::Result<Value<'js>> {
+    if encoding != "utf-8" {
+        let args = Array::new(ctx.clone())?;
+        args.set(0, encoding)?; args.set(1, input)?; args.set(2, fatal)?; args.set(3, ignore_bom)?;
+        let serialized = ctx.json_stringify(args)?.unwrap().to_string()?;
+        let result = call_host(ctx.clone(), "op_text_decode".into(), serialized)?;
+        return ctx.json_parse(result.as_string().ok_or_else(|| thrown(&ctx, "Invalid decoder response"))?.to_string()?);
+    }
+    let bytes = input.as_bytes().ok_or_else(|| thrown(&ctx, "Detached decoder input"))?;
+    let bytes = if !ignore_bom { bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes) } else { bytes };
+    let result = Object::new(ctx.clone())?;
+    if fatal && std::str::from_utf8(bytes).is_err() { result.set("ok", false)?; }
+    else { result.set("ok", true)?; result.set("v", String::from_utf8_lossy(bytes).as_ref())?; }
+    Ok(result.into_value())
 }
 fn fetch_url<'js>(ctx: Ctx<'js>, Rest(args): Rest<Value<'js>>) -> rquickjs::Result<Promise<'js>> {
     let state = shared_state(&ctx);
@@ -189,6 +209,8 @@ impl BrowserTab {
             ops.set("op_fetch_url", Func::from(fetch_url))?;
             ops.set("op_posted_task", Func::from(posted_task))?;
             ops.set("__host", Func::from(call_host))?;
+            ops.set("op_text_decode", Func::from(text_decode))?;
+            ops.set("op_text_encode", Func::from(text_encode))?;
             core.set("queueUserTimer", Func::from(user_timer))?;
             core.set("cancelTimer", Func::from(|ctx: Ctx, id: u32| { shared_state(&ctx).timers.borrow_mut().remove(&id); }))?;
             for name in ["setUnhandledPromiseRejectionHandler", "setHandledPromiseRejectionHandler"] {

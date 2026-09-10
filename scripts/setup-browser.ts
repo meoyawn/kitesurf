@@ -40,8 +40,8 @@ if (pkgxVersion.status !== 0 || pkgxVersion.stdout.trim() !== "pkgx 2.11.0") {
   pkgx = resolve(directory, "pkgx");
   await chmod(pkgx, 0o755);
 }
-const compiler = spawnSync(pkgx, ["--json=v2", "+llvm.org@23.1.1"], { encoding: "utf8" });
-if (compiler.error || compiler.status !== 0) throw new Error("pkgx is required to install the pinned LLVM compiler", { cause: compiler.error });
+const compiler = spawnSync(pkgx, ["--json=v2", "+llvm.org@23.1.1", "+github.com/WebAssembly/binaryen@132.0.0"], { encoding: "utf8" });
+if (compiler.error || compiler.status !== 0) throw new Error("pkgx is required to install pinned LLVM and Binaryen", { cause: compiler.error });
 const compilerEnv = JSON.parse(compiler.stdout).env as Record<string, string[]>;
 const environment: Record<string, string> = {};
 for (const [key, paths] of Object.entries(compilerEnv)) environment[key] = [...paths, ...(process.env[key] ? [process.env[key]!] : [])].join(delimiter);

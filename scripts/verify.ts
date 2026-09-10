@@ -4,7 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 
 const origin = process.argv.slice(2).find(arg => !arg.startsWith("--")) ?? process.env.PUBLIC_ORIGIN ?? "https://localhost:8787";
 const useYandex = process.argv.includes("--yandex");
-const useBrowser = process.argv.includes("--browser") || useYandex;
+const useSites = process.argv.includes("--sites");
+const useBrowser = process.argv.includes("--browser") || useYandex || useSites;
 const resource = origin + "/mcp";
 const scope = "browser:use";
 const redirectUri = "https://chatgpt.com/connector_platform_oauth_redirect";
@@ -162,6 +163,17 @@ try {
     assert.ok(!click.error && !click.result?.isError, "Click after reconnect failed: " + JSON.stringify(click));
     assert.match(JSON.stringify(click.result), /iana\.org/, "Click did not follow the original page's link.");
     console.log("PASS: live browser preserved its page and link reference across MCP reconnect and followed the link.");
+    const opened = await rpc(700, "tools/call", { name: "browser_tabs", arguments: { action: "new", url: "https://example.com" } });
+    assert.ok(!opened.error && !opened.result?.isError, "Opening a tab failed");
+    const tabs = opened.result.structuredContent.result.tabs as { id: number; selected: boolean }[];
+    assert.equal(tabs.length, 2);
+    const selected = tabs.find(tab => tab.selected)!;
+    const closed = await rpc(701, "tools/call", { name: "browser_tabs", arguments: { action: "close", id: selected.id } });
+    assert.ok(!closed.error && !closed.result?.isError, "Closing a tab failed");
+    assert.equal(closed.result.structuredContent.result.tabs.length, 1);
+    const restored = await rpc(702, "tools/call", { name: "browser_snapshot", arguments: {} });
+    assert.match(JSON.stringify(restored.result), /iana\.org/);
+    console.log("PASS: MCP created and closed a second tab and restored the first page.");
     if (useYandex) {
       const url = "https://yandex.ru/jobs/vacancies/city_kazan?profession=backend-developer&profession=system-developer&skills=74&skills=378&skills=64&skills=160&pro_levels=senior";
       const selector = 'a[class*="VacancySnippet_titleLink"]';
@@ -193,9 +205,39 @@ try {
         before: before.length, after: after.length, added,
         elapsedMs: Math.round(performance.now() - started), scrollMs: Math.round(performance.now() - scrollStarted),
         wasmMemoryBytes: status.wasmMemoryBytes, requests: status.network.requests, scriptErrors: status.errors,
+        quickJsUsedBytes: status.quickJsUsedBytes, rustHeapUsedBytes: status.rustHeapUsedBytes,
       };
       writeFileSync(new URL("../.wrangler/yandex-result.json", import.meta.url), JSON.stringify(report, null, 2) + "\n");
       console.log("PASS: live Yandex 20→21 after scrolling. " + JSON.stringify(report));
+    }
+    if (useSites) {
+      const cases = [
+        { url: "https://news.ycombinator.com/", selector: ".athing", title: "Hacker News" },
+        { url: "https://en.wikipedia.org/wiki/WebAssembly", selector: "#firstHeading", title: "WebAssembly" },
+        { url: "https://developer.mozilla.org/en-US/docs/Web/API/Document/querySelector", selector: "h1", title: "querySelector" },
+      ];
+      const reports = [];
+      let id = 800;
+      for (const site of cases) {
+        const started = performance.now();
+        try {
+          const response = await rpc(id++, "tools/call", { name: "browser_navigate", arguments: { url: site.url } });
+          assert.ok(!response.error && !response.result?.isError, JSON.stringify(response));
+          const snapshot = response.result.structuredContent.result;
+          assert.ok(snapshot.title.includes(site.title), "Unexpected title: " + snapshot.title);
+          assert.ok(snapshot.text.length > 100, "No readable page content");
+          const selected = await rpc(id++, "tools/call", { name: "browser_evaluate", arguments: { expression: "document.querySelectorAll(" + JSON.stringify(site.selector) + ").length" } });
+          assert.ok(!selected.error && !selected.result?.isError && selected.result.structuredContent.result > 0, "Expected page elements are missing");
+          const status = await rpc(id++, "tools/call", { name: "browser_status", arguments: {} });
+          reports.push({ url: site.url, passed: true, elapsedMs: Math.round(performance.now() - started), title: snapshot.title, ...status.result.structuredContent.result });
+          console.log("PASS: live site content and selectors: " + site.url);
+        } catch (error) {
+          reports.push({ url: site.url, passed: false, elapsedMs: Math.round(performance.now() - started), error: String(error) });
+          console.error("FAIL: live site: " + site.url + " " + String(error));
+        }
+      }
+      writeFileSync(new URL("../.wrangler/sites-result.json", import.meta.url), JSON.stringify(reports, null, 2) + "\n");
+      assert.ok(reports.every(report => report.passed), "A live site smoke test failed; see .wrangler/sites-result.json");
     }
   }
 } finally {

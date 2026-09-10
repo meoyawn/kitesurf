@@ -66,6 +66,13 @@ tasks:
       NODE_EXTRA_CA_CERTS: .secrets/local-cert.pem
     cmd: node scripts/verify.ts https://localhost:8787 --yandex
 
+  test:sites:
+    desc: Smoke-test live news, reference and documentation pages through local MCP
+    deps: [build]
+    env:
+      NODE_EXTRA_CA_CERTS: .secrets/local-cert.pem
+    cmd: node scripts/verify.ts https://localhost:8787 --sites
+
   check:
     desc: Run lint, typechecking, and tests
     run: once

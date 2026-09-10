@@ -1,4 +1,4 @@
-for (const name of ["op_get_cookies", "op_set_cookie", "op_random_bytes", "op_encoding_for_label", "op_text_decode", "op_url_resolve", "op_url_parse", "op_url_set", "op_intl"]) {
+for (const name of ["op_get_cookies", "op_set_cookie", "op_random_bytes", "op_encoding_for_label", "op_url_resolve", "op_url_parse", "op_url_set", "op_intl"]) {
   Deno.core.ops[name] = (...args) => Deno.core.ops.__host(name, JSON.stringify(args));
 }
 globalThis.Intl = {};

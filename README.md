@@ -49,11 +49,18 @@ network fingerprint.
 Cloudflare allows **128 MB per isolate**, including the host JavaScript heap and
 all WASM allocations. Concurrent requests in an isolate share that budget. [Cloudflare memory limits](https://developers.cloudflare.com/workers/platform/limits/#memory)
 
-The combined Obscura + QuickJS module passed the live Yandex 20→21 test in local
-workerd on September 9, 2026 with **80,609,280 bytes (76.9 MiB) of WASM memory**.
-The module is approximately **3.98 MB raw / 1.34 MB gzip**, including its bootstrap.
-Tabs share a **96 MiB WASM maximum**, with a 48 MiB QuickJS limit per tab. Ordinary
-DOM calls stay inside WASM and return guest JavaScript values directly.
+The combined Obscura + QuickJS module passes the live Yandex 20→21 test in local
+workerd with approximately **77 MiB of WASM memory**. The September 10, 2026 build
+includes Binaryen size optimization and native UTF-8 buffer callbacks:
+
+| Measurement | Initial Obscura checkpoint | Optimized build |
+| --- | --- | --- |
+| WASM binary | 3,976,636 bytes | 3,379,953 bytes (15.0% smaller) |
+| WASM gzip | 1,343,945 bytes | 1,297,307 bytes (3.5% smaller) |
+| Yandex WASM memory | 76.9 MiB | 76.9 MiB (80,609,280 bytes; unchanged) |
+
+Tabs share a **96 MiB WASM maximum**, with a 48 MiB QuickJS limit per tab.
+Ordinary DOM calls stay inside WASM and return guest JavaScript values directly.
 
 The first combined build needed roughly 110 MiB. Removing an unused retained CSS
 custom-property cache reduced that peak while keeping CSS inheritance and the
@@ -77,7 +84,7 @@ task check
 
 `task setup` initializes pinned Git submodules, installs packages with nub, and
 prepares the pinned Rust/WASM toolchain and matching wasm-bindgen CLI. Repository
-setup belongs in this task; CI calls it too.
+setup, including the Binaryen optimizer, belongs in this task; CI calls it too.
 
 Generate an owner key once. This command writes the key to an ignored file and
 prints its SHA-256 hash:
@@ -146,7 +153,7 @@ deployment secrets, and deployments are serialized.
 
 `task check` runs linting, typechecking, and deterministic tests for the browser,
 MCP transport, and authorization. Browser tests cover DOM mutation, scrolling,
-fetch, cookies, stealth, interruption, and reconnects.
+fetch, cookies, stealth, text encoding, tab lifetime, interruption, and reconnects.
 
 For the live acceptance test, leave `nub run dev` running and use a second terminal:
 
@@ -154,7 +161,7 @@ For the live acceptance test, leave `nub run dev` running and use a second termi
 task test:yandex
 ```
 
-The test exercises OAuth and MCP, then loads the
+The test exercises OAuth, MCP reconnects, and creating and closing tabs, then loads the
 [Yandex vacancies page](https://yandex.ru/jobs/vacancies/city_kazan?profession=backend-developer&profession=system-developer&skills=74&skills=378&skills=64&skills=160&pro_levels=senior).
 It requires **20 openings before scrolling and 21 afterward**, with no pagination
 request before scrolling. The page's own JavaScript must fetch the next cursor
@@ -163,6 +170,11 @@ and append one distinct opening while retaining the original 20.
 The test is opt-in because the live site and its vacancy count can change. Successful runs write
 `.wrangler/yandex-result.json`; cleanup closes the browser and revokes the test
 grant. Leave a minute between full runs to respect the authentication rate limit.
+
+`task test:sites` also checks live readable content and selectors on Hacker News,
+Wikipedia and MDN, writing `.wrangler/sites-result.json`. These are limited smoke
+tests; they passed on September 10, 2026 but do not verify every page feature or
+broad browser compatibility. MDN still reports dynamic-module loading errors.
 
 ## Dependencies and builds
 

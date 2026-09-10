@@ -12,6 +12,17 @@ function value(result: CallToolResult) {
 }
 
 describe("Worker browser runtime", function suite() {
+  test("native UTF-8 decoding preserves byte ranges, replacement, BOM and fallback encodings", async function decoding() {
+    const browser = createBrowserTools(makePage, async function fixture() { return new Response("<title>Encoding</title>"); });
+    try {
+      value(await browser.callTool({ name: "browser_navigate", arguments: { url: "https://example.test/" } }));
+      const decoded = value(await browser.callTool({ name: "browser_evaluate", arguments: { expression:
+        "(()=>{const bytes=new Uint8Array([0xff,0xef,0xbb,0xbf,0xd0,0xaf,0xf0,0x9f,0x98,0x80,0xff]);const view=bytes.subarray(1,10);let fatal=false;try{new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch(e){fatal=e instanceof TypeError}return{unicode:new TextDecoder().decode(view),bom:new TextDecoder('utf-8',{ignoreBOM:true}).decode(view).charCodeAt(0),replacement:new TextDecoder().decode(new Uint8Array([0xff,65])),empty:new TextEncoder().encode().length,encoded:[...new TextEncoder().encode('Я😀')],unpaired:[...new TextEncoder().encode(String.fromCharCode(0xd800))],fatal,legacy:new TextDecoder('windows-1251').decode(new Uint8Array([0xdf])),large:new TextDecoder().decode(new Uint8Array(1024*1024).fill(65)).length}})()",
+      } }));
+      assert.deepEqual(decoded, { unicode: "Я😀", bom: 0xfeff, replacement: "�A", empty: 0, encoded: [208, 175, 240, 159, 152, 128], unpaired: [239, 191, 189], fatal: true, legacy: "Я", large: 1024 * 1024 });
+    } finally { await browser.close(); }
+  });
+
   test("tabs retain independent DOMs and release a shared browser heap on close", async function tabs() {
     const browser = createBrowserTools(makePage, async function fixture(input) {
       return new Response("<title>" + new URL(String(input)).pathname + "</title>");
