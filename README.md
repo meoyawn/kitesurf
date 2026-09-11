@@ -48,9 +48,18 @@ application tasks before returning. Repeating intervals and rendering callbacks
 run without keeping an otherwise idle action open. Delayed activity can be
 awaited with `browser_wait_for`. There are no application quotas on request
 count, downloaded bytes, snapshot content or action input size. Downloads queue
-behind the platform's six concurrent connections. Wrangler requests Cloudflare's
-maximum configurable CPU and subrequest allowances; account and isolate limits
-still apply. A platform resource failure is reported as a failed action.
+behind the platform's six concurrent connections. Deployment uses Cloudflare's
+platform defaults, including the account's subrequest allowance. The Free plan
+allows 50 subrequests per invocation; redirects also count. A platform resource
+failure is reported as a failed action, so a page can exceed the account's
+allowance even when it works locally. [Subrequest limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests)
+
+The entry Worker handles OAuth and MCP transport; browser execution, layout,
+and page downloads run in `BrowserMCP`, a SQLite-backed Durable Object. Its
+default CPU allowance is 30 seconds per invocation, excluding time waiting on
+network I/O. The Free entry Worker's 10 ms CPU allowance is a separate budget.
+[Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/),
+[Worker CPU limits](https://developers.cloudflare.com/workers/platform/limits/#cpu-time)
 
 ## Stealth and memory
 
@@ -144,6 +153,12 @@ env CLOUDFLARE_API_TOKEN=(string trim < .cloudflare-api-token) task deploy
 and uploads the owner-key hash as a Worker secret. Account IDs, the deployment
 origin, tokens, and the owner key stay out of tracked configuration.
 
+The deployment contract supports Workers Free by leaving `limits` unset in
+`wrangler.jsonc`. Both validation and deployment reject custom limits: CPU
+overrides require Workers Paid, and its maximum subrequest allowance is not a
+Free-plan entitlement. Raising these limits requires revisiting the deployment
+contract and the account's Workers plan together. [Wrangler limits](https://developers.cloudflare.com/workers/wrangler/configuration/#limits)
+
 Connect ChatGPT to `/mcp` at your configured `PUBLIC_ORIGIN`, select OAuth, and
 approve the connection with the owner key. OAuth discovery and client registration
 are provided by the Worker. The current authorization policy accepts ChatGPT
@@ -162,8 +177,12 @@ deployment secrets, and deployments are serialized.
 
 ## Verify
 
-`task check` runs linting, typechecking, and deterministic tests for the browser,
-MCP transport, and authorization. Browser tests cover DOM mutation, scrolling,
+`task check` runs linting, typechecking, deterministic tests, and `task deploy:check`.
+The deployment check validates the platform-defaults contract and dry-runs the
+actual Wrangler bundle through the deployment script, without credentials or an
+upload. Wrangler dry runs and local workerd do not enforce account entitlements;
+the explicit configuration check catches unsupported overrides before deployment.
+Browser tests cover DOM mutation, scrolling,
 fetch, cookies, stealth, text encoding, tab lifetime, interruption, and reconnects.
 
 For the live acceptance test, leave `nub run dev` running and use a second terminal:
