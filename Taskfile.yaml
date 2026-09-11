@@ -74,15 +74,21 @@ tasks:
     cmd: node scripts/verify.ts https://localhost:8787 --sites
 
   check:
-    desc: Run lint, typechecking, and tests
+    desc: Run lint, typechecking, tests, and deployment validation
     run: once
-    deps: [lint, tsc, test]
+    deps: [lint, tsc, test, deploy:check]
 
   build:
     desc: Bundle the owner authorization client
     run: once
     deps: [browser:build]
     cmd: nubx esbuild src/auth-client.ts --bundle --format=esm --minify --outfile=public/auth.js
+
+  deploy:check:
+    desc: Validate platform defaults and bundle the Worker without deployment credentials
+    run: once
+    deps: [build]
+    cmd: node scripts/deploy.ts --dry-run
 
   deploy:
     desc: Check, build, and deploy the protected Worker

@@ -9,10 +9,6 @@
   ],
   "workers_dev": true,
   "preview_urls": false,
-  "limits": {
-    "cpu_ms": 300000,
-    "subrequests": 10000000
-  },
   "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
   "assets": {
     "directory": "./public",
