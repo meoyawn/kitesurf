@@ -10,7 +10,7 @@ import { formatRead, readBrowserUrl, readHtmlScript, type ReadDocument } from ".
 type ToolName = keyof typeof browserSchemas;
 type ToolCall = { [Name in ToolName]: { name: Name; args: z.output<typeof browserSchemas[Name]> } }[ToolName];
 type Tab = { id: string; label?: string; page?: BrowserPage; network?: BrowserNetwork; refs: Map<string, number>; nodeRefs: Map<number, string> };
-type Session = { namespace: string; tabs: Map<string, Tab>; tab?: Tab; runningTab?: Tab; jar: CookieJar; policy: BrowserNetworkPolicy };
+type Session = { chat?: string; namespace: string; tabs: Map<string, Tab>; tab?: Tab; runningTab?: Tab; jar: CookieJar; policy: BrowserNetworkPolicy };
 type SnapshotNode = { nodeId?: number; role: string; name: string; depth: number; interactive?: boolean; href?: string; value?: string; disabled?: boolean; checked?: boolean | string; selected?: boolean; level?: number };
 
 /** All sessions share one bounded WASM heap. Calls serialize across MCP reconnects. */
@@ -20,11 +20,11 @@ export function createBrowserTools(makePage: (url: string, html: string, network
   let nextTab = 0, nextRef = 0;
   let pending: Promise<unknown> = Promise.resolve();
 
-  function getSession(namespace = "default", name = "default") {
-    const key = JSON.stringify([namespace, name]);
+  function getSession(namespace = "default", name = "default", chat?: string) {
+    const key = JSON.stringify([chat ?? null, namespace, name]);
     let session = sessions.get(key);
     if (!session) {
-      session = { namespace, tabs: new Map(), jar: new CookieJar(), policy: {} };
+      session = { chat, namespace, tabs: new Map(), jar: new CookieJar(), policy: {} };
       sessions.set(key, session);
     }
     return session;
@@ -229,7 +229,7 @@ export function createBrowserTools(makePage: (url: string, html: string, network
       case "browser_tab_close": await closeTab(session, resolveTab(session, args.tab)); return listTabs(session);
       case "browser_eval": return evaluate(session, args.script);
       case "browser_close":
-        if (args.all) { for (const item of sessions.values()) if (item.namespace === session.namespace) await closeSession(item); }
+        if (args.all) { for (const item of sessions.values()) if (item.chat === session.chat && item.namespace === session.namespace) await closeSession(item); }
         else await closeSession(session);
         return { open: false };
     }
@@ -242,7 +242,9 @@ export function createBrowserTools(makePage: (url: string, html: string, network
       const name = params.name as ToolName;
       const args = browserSchemas[name].parse(params.arguments || {});
       const call = { name, args } as ToolCall;
-      session = getSession(args.namespace, args.session);
+      const chat = params._meta?.["openai/session"];
+      if (chat !== undefined && (typeof chat !== "string" || !chat.length)) throw new Error("openai/session must be a non-empty string");
+      session = getSession(args.namespace, args.session, chat);
       if (args.allowedDomains) session.policy.allowedDomains = args.allowedDomains;
       const controller = new AbortController();
       session.policy.signal = controller.signal;

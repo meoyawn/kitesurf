@@ -59,6 +59,17 @@ tasks:
     deps: [browser:build]
     cmd: nubx vitest run
 
+  test:mcp:
+    desc: Test MCP transport and ChatGPT conversation routing through WASM
+    deps: [browser:build]
+    cmd: nubx vitest run tests/mcp.test.ts tests/mcp-session.test.ts
+
+  mcp:harness:
+    desc: Send JSONL chat commands through MCP HTTP to the local WASM browser
+    deps: [browser:build]
+    interactive: true
+    cmd: node scripts/mcp-harness.ts {{.CLI_ARGS}}
+
   test:yandex:
     desc: Verify OAuth, MCP reconnects, and live Yandex 20-to-21 scrolling against local dev
     deps: [build]
