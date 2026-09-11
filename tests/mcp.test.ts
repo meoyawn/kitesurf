@@ -9,13 +9,13 @@ function browserServer() {
   let page = "";
   let count = 20;
   server.setRequestHandler(ListToolsRequestSchema, async function list() {
-    return { tools: ["browser_navigate", "browser_click", "browser_snapshot", "browser_close"].map(name => ({
+    return { tools: ["browser_open", "browser_click", "browser_snapshot", "browser_close"].map(name => ({
       name, inputSchema: { type: "object" as const },
     })) };
   });
   server.setRequestHandler(CallToolRequestSchema, async function call(request) {
     switch (request.params.name) {
-      case "browser_navigate":
+      case "browser_open":
         page = String(request.params.arguments?.url);
         count = 20;
         break;
@@ -71,7 +71,7 @@ describe("MCP browser continuity", function suite() {
       const listed = JSONRPCResponseSchema.parse(await (await rpc(browser, "tools/list")).json());
       assert.ok("result" in listed);
       assert.equal(ListToolsResultSchema.parse(listed.result).tools.length, 4);
-      assert.match(text(await call(browser, "browser_navigate", { url: "https://jobs.example" })), /20 openings/);
+      assert.match(text(await call(browser, "browser_open", { url: "https://jobs.example" })), /20 openings/);
       await rpc(browser, "initialize", {
         protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "reconnected", version: "1" },
       });
@@ -87,7 +87,7 @@ describe("MCP browser continuity", function suite() {
     const server = browserServer();
     const browser = await connectBrowserTools(server);
     try {
-      await call(browser, "browser_navigate", { url: "https://jobs.example" });
+      await call(browser, "browser_open", { url: "https://jobs.example" });
       const results = await Promise.all([
         call(browser, "browser_click", { ref: "load-more" }),
         call(browser, "browser_click", { ref: "load-more" }),
@@ -106,7 +106,7 @@ describe("MCP browser continuity", function suite() {
     const browser = await connectBrowserTools(server);
     try {
       await assert.rejects(browser.callTool({ name: "browser_click", arguments: { ref: "missing" } }), /No current snapshot/);
-      assert.match(text(await call(browser, "browser_navigate", { url: "https://jobs.example" })), /20 openings/);
+      assert.match(text(await call(browser, "browser_open", { url: "https://jobs.example" })), /20 openings/);
       assert.match(text(await call(browser, "browser_click", { ref: "load-more" })), /40 openings/);
     } finally {
       await server.close();
@@ -117,10 +117,10 @@ describe("MCP browser continuity", function suite() {
     const server = browserServer();
     const browser = await connectBrowserTools(server);
     try {
-      await call(browser, "browser_navigate", { url: "https://jobs.example" });
+      await call(browser, "browser_open", { url: "https://jobs.example" });
       assert.equal(text(await call(browser, "browser_close")), "No open pages");
       assert.equal(text(await call(browser, "browser_snapshot")), "No open pages");
-      assert.match(text(await call(browser, "browser_navigate", { url: "https://other.example" })), /other.example: 20 openings/);
+      assert.match(text(await call(browser, "browser_open", { url: "https://other.example" })), /other.example: 20 openings/);
     } finally {
       await server.close();
     }
@@ -132,7 +132,7 @@ describe("MCP browser continuity", function suite() {
     try {
       const a = await connectBrowserTools(first);
       const b = await connectBrowserTools(second);
-      await call(a, "browser_navigate", { url: "https://jobs.example" });
+      await call(a, "browser_open", { url: "https://jobs.example" });
       assert.equal(text(await call(b, "browser_snapshot")), "No open pages");
     } finally {
       await first.close();

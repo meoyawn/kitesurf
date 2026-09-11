@@ -3,6 +3,36 @@ import { describe, test } from "vitest";
 import { createBrowserNetwork } from "../src/browser-network.ts";
 
 describe("Browser network transfers", function suite() {
+  test("domain restrictions apply to redirects, exact domains and subdomains", async function domains() {
+    const requested: string[] = [];
+    const network = createBrowserNetwork(async function fixture(input) {
+      requested.push(String(input));
+      return String(input).endsWith("/redirect") ? new Response(null, { status: 302, headers: { location: "https://blocked.test/private" } }) : new Response("ok");
+    }, undefined, { allowedDomains: ["example.test", "*.allowed.test"] });
+    try {
+      await network.download("https://example.test/");
+      await network.download("https://sub.allowed.test/");
+      await assert.rejects(network.download("https://badexample.test/"), /not allowed/);
+      await assert.rejects(network.download("https://example.test/redirect"), /not allowed/);
+      assert.deepEqual(requested, ["https://example.test/", "https://sub.allowed.test/", "https://example.test/redirect"]);
+    } finally { network.close(); }
+  });
+
+  test("tool cancellation interrupts response bodies and releases connections", async function cancelBody() {
+    const controller = new AbortController();
+    let cancelled = false;
+    const network = createBrowserNetwork(async function fixture() {
+      return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+    }, undefined, { signal: controller.signal });
+    const response = network.download("https://example.test/");
+    await new Promise(resolve => setTimeout(resolve, 1));
+    controller.abort(new Error("tool timeout"));
+    await assert.rejects(response, /tool timeout/);
+    assert.equal(cancelled, true);
+    assert.equal(network.diagnostics().pending, 0);
+    network.close();
+  });
+
   test("more than 200 requests complete through the connection queue", async function requests() {
     let active = 0;
     let peak = 0;

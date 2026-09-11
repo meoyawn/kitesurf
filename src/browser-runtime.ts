@@ -33,6 +33,7 @@ export function createBrowserPage(resources: PageResources) {
     if (disposed) throw new Error("Page is closed");
     if (nativeFault || resources.isFaulted?.()) throw new Error("Browser WASM runtime failed; page closed");
     if (asynchronousError) throw asynchronousError;
+    network.throwIfAborted();
     const started = performance.now();
     let duration: number | undefined;
     try {

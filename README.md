@@ -27,26 +27,66 @@ and memory use are still being tested.
 
 | Tool | What it does |
 | --- | --- |
-| `browser_navigate` | Load an HTTP(S) URL and execute its scripts |
-| `browser_snapshot` | Read page text, links, and controls with numeric node references |
-| `browser_click` | Click a node by reference or CSS selector |
-| `browser_fill` | Set an input, textarea, or select value and dispatch input/change events |
-| `browser_evaluate` | Evaluate a synchronous page JavaScript expression and return JSON |
-| `browser_scroll` | Scroll to a vertical offset or the bottom and process page activity |
-| `browser_wait_for` | Process pending tasks until an expression is truthy; timeout is optional |
+| `browser_tools_profiles` | Discover the supported core tools and engine limitations |
+| `browser_open` | Open `about:blank` or navigate to an HTTP(S) URL; bare hosts use HTTPS |
+| `browser_reload` | Reload the selected page and execute its scripts |
+| `browser_read` | Read the active DOM or fetch a URL as Markdown/readable text; filter sections, get an outline, or discover ancestor `llms.txt`/`llms-full.txt` |
+| `browser_snapshot` | Read a DOM accessibility tree with `@e` references; scope by selector, limit depth, include URLs, or include noninteractive content |
+| `browser_click` | Activate a node by reference or CSS selector; optionally open its link in a new tab |
+| `browser_fill` | Fill an input, textarea or contenteditable element and dispatch input/change events |
+| `browser_check`, `browser_uncheck` | Activate checkboxes, radio buttons and ARIA switches when their state needs changing |
+| `browser_select` | Select one or more options by value or label |
+| `browser_eval` | Run a JavaScript expression or script and await a returned promise |
+| `browser_scroll` | Scroll a page or element up, down, left or right by a pixel amount |
+| `browser_wait_ms` | Process page tasks for a fixed duration |
+| `browser_wait_for_selector`, `browser_wait_for_text` | Wait for a CSS-visible element or page text |
+| `browser_wait_for_load` | Wait for DOMContentLoaded, load, or 500 ms of network inactivity |
+| `browser_wait_for_function` | Process pending tasks until a synchronous expression is truthy |
+| `browser_get_text`, `browser_get_url`, `browser_get_title` | Read element text, the active URL or the title |
 | `browser_status` | Inspect script errors, requests, stealth settings, and allocated WASM memory |
-| `browser_tabs` | List, create, select or close tabs |
-| `browser_close` | Release all tabs, cookies and the WASM instance |
+| `browser_tab_new`, `browser_tab_list`, `browser_tab_switch`, `browser_tab_close` | Manage tabs using stable IDs (`t1`) or labels |
+| `browser_close` | Release the session, or all sessions in its namespace with `all: true` |
 
-Navigation replaces the selected page while retaining its cookies. Tabs have
-independent page state and cookie sessions. Tabs share one WASM heap;
-closing the last tab releases it. There is no automatic idle closure or tab quota.
-State lives in memory and can be lost when the isolate restarts.
+The surface follows the supported portion of
+[agent-browser's core MCP profile](https://github.com/vercel-labs/agent-browser/blob/8c15ff9f71ae60c7e99e66afe1e2d4b9bf414fe2/cli/src/mcp.rs),
+using `browser_` names. It exposes 26 tools: 24 supported core tools plus the
+existing runtime diagnostics and expression-wait capability. Screenshots, painting,
+PDF/video output, native keyboard input, back/forward navigation and AI chat are
+excluded. Chromium launch flags, CLI arguments, filesystem paths, OS certificate
+configuration and disk-based session restore are not accepted. Unsupported tools
+and arguments fail validation rather than advertising unavailable behavior.
+
+Snapshots default to interactive elements. Set `interactive: false` for page
+structure and text. Pass a returned reference as `selector: "@e1"`; CSS selectors
+must identify one element. References survive repeated snapshots of the same
+elements and are scoped to the latest snapshot in the current tab. Navigation,
+tab closure and removed elements invalidate them. The tree derives roles and
+names from the DOM; visibility and geometry have Obscura's layout limitations.
+Clicks use DOM activation and cannot produce trusted native input events.
+
+All tools accept `session`, `namespace`, `allowedDomains` and `timeoutMs`.
+Sessions isolate tabs and cookies; tabs within a session share cookies. Every
+session and tab shares the same **96 MiB maximum WASM heap**, and closing the
+last tab releases it. Navigation replaces the selected DOM and JavaScript VM;
+it retains cookies but does not persist Web Storage or cross-document history.
+There is no automatic idle closure. State lives in memory and can be lost when
+the isolate restarts. Close unused tabs to release their DOM and QuickJS state.
+
+An explicit `browser_read` URL uses a separate unauthenticated request context,
+without changing the active tab. HTML extraction uses the existing native parser
+without bootstrapping page scripts, loading linked resources or adding a parser
+dependency. Omit the URL to read the rendered DOM and its current authenticated
+content. `raw`, `requireMd`, `outline`, `filter` and `llms` control extraction.
+`llms-full.txt` is fetched only when explicitly requested.
 
 Navigation, clicks and scrolling process pending downloads, microtasks and
-application tasks before returning. Repeating intervals and rendering callbacks
+application tasks before returning a small result. They do not automatically
+build snapshots; call `browser_snapshot` or `browser_read` when needed. Repeating intervals and rendering callbacks
 run without keeping an otherwise idle action open. Delayed activity can be
-awaited with `browser_wait_for`. There are no application quotas on request
+awaited with the wait tools. Calls default to a 120-second timeout; conditional
+waits default to 25 seconds and URL reads to 30 seconds, bounded by the call
+timeout. Cancellation aborts networking and releases an interrupted page before
+the next queued action. There are no application quotas on request
 count, downloaded bytes, snapshot content or action input size. Downloads queue
 behind the platform's six concurrent connections. Deployment uses Cloudflare's
 platform defaults, including the account's subrequest allowance. The Free plan
@@ -196,7 +236,9 @@ The test exercises OAuth, MCP reconnects, and creating and closing tabs, then lo
 It requires **20 openings before scrolling and 21 afterward**, with no pagination
 request before scrolling. The page's own JavaScript must fetch the next cursor
 and append one distinct opening while retaining the original 20.
-The action response must already contain all 21 openings. To verify the button
+The page must contain all 21 openings when scrolling finishes, without another
+wait call. Scrolling advances in 576-pixel steps so intersection observers can
+see the pagination sentinel. To verify the button
 instead, run `node scripts/verify.ts --yandex --click` with the local certificate
 configured through `NODE_EXTRA_CA_CERTS`.
 
