@@ -65,6 +65,16 @@ names from the DOM; visibility and geometry have Obscura's layout limitations.
 Clicks use DOM activation and cannot produce trusted native input events.
 
 All tools accept `session`, `namespace`, `allowedDomains` and `timeoutMs`.
+The client-provided `params._meta["openai/session"]` scopes namespaces and browser
+sessions to a ChatGPT conversation. Calls with the same conversation, namespace
+and session keep the selected tab across MCP reconnects. Different conversations
+have separate tabs and cookies, even when both omit `session` and `namespace`.
+`browser_close(all: true)` closes only that conversation's namespace.
+Clients without this metadata share a separate legacy scope; invalid conversation
+metadata is rejected. This field selects browser state within an authenticated
+owner's Durable Object; it does not grant access or replace OAuth.
+[OpenAI client metadata reference](https://developers.openai.com/plugins/reference)
+
 Sessions isolate tabs and cookies; tabs within a session share cookies. Every
 session and tab shares the same **96 MiB maximum WASM heap**, and closing the
 last tab releases it. Navigation replaces the selected DOM and JavaScript VM;
@@ -224,6 +234,38 @@ upload. Wrangler dry runs and local workerd do not enforce account entitlements;
 the explicit configuration check catches unsupported overrides before deployment.
 Browser tests cover DOM mutation, scrolling,
 fetch, cookies, stealth, text encoding, tab lifetime, interruption, and reconnects.
+
+The local chat harness uses the MCP SDK's Streamable HTTP client, the real
+`mcpFetch` handler and the compiled WASM browser. Each simulated chat sends
+`params._meta["openai/session"]` on every tool call. All chats share one browser
+instance, matching one authenticated owner's Durable Object. MCP HTTP requests
+are handled in process; the CLI uses real network fetches for page URLs.
+
+```fish
+task test:mcp
+task mcp:harness < tests/fixtures/mcp-session.jsonl
+```
+
+The offline example interleaves two chats, scrolls chat `a`, reconnects its MCP
+client and checks that the count is still `20` and scroll position is still `300`.
+Clicking its original button brings it into view and increments the count.
+The final results are `{"count":"21","y":0}` for `a` and
+`{"count":null,"y":0}` for `b`.
+Run `task mcp:harness` to enter your own JSONL commands, or redirect a file to it.
+Use `method: "tools/list"` to discover tools, `"tools/call"` with `name` and
+`arguments` to call one, and `"reconnect"` to replace a chat's MCP client.
+The `chat` string becomes `openai/session`; it is not injected into tool arguments.
+Results are JSONL on stdout; any failed command makes the process exit nonzero
+after consuming the input. Add `-- --trace` to print HTTP requests and response
+statuses to stderr. EOF closes clients and releases all browser state.
+
+The regression tests exercise real DOM mutation, snapshot references, scroll
+position, cookies, concurrent calls, scoped closure and loss of state after
+recreating the browser. They use fixture page responses and require no network
+or credentials. This harness tests the documented conversation metadata contract;
+it does not reproduce ChatGPT's model decisions, OAuth, undocumented retry
+behavior, or Cloudflare's Durable Object lifecycle. Exact ChatGPT behavior still
+requires a live ChatGPT test.
 
 For the live acceptance test, leave `nub run dev` running and use a second terminal:
 

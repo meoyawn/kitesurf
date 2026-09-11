@@ -1,0 +1,9 @@
+{"chat":"a","method":"tools/call","name":"browser_open"}
+{"chat":"a","method":"tools/call","name":"browser_eval","arguments":{"script":"document.body.innerHTML='<button id=more>More</button><p id=count>20</p><div style=height:4000px></div>';document.querySelector('#more').onclick=function(){const el=document.querySelector('#count');el.textContent=String(Number(el.textContent)+1)};true"}}
+{"chat":"b","method":"tools/call","name":"browser_open"}
+{"chat":"a","method":"tools/call","name":"browser_scroll","arguments":{"direction":"down","amount":300}}
+{"chat":"a","method":"reconnect"}
+{"chat":"a","method":"tools/call","name":"browser_eval","arguments":{"script":"({count:document.querySelector('#count').textContent,y:scrollY})"}}
+{"chat":"a","method":"tools/call","name":"browser_click","arguments":{"selector":"#more"}}
+{"chat":"a","method":"tools/call","name":"browser_eval","arguments":{"script":"({count:document.querySelector('#count').textContent,y:scrollY})"}}
+{"chat":"b","method":"tools/call","name":"browser_eval","arguments":{"script":"({count:document.querySelector('#count'),y:scrollY})"}}

@@ -5,8 +5,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 const selector = z.string().min(1).describe("Element @e reference from the current tab's snapshot, or a CSS selector.");
 const waitTimeoutMs = z.number().int().positive().optional().describe("Maximum time for the wait condition, in milliseconds.");
 const common = {
-  session: z.string().min(1).optional().describe("Isolated browser session name; defaults to default."),
-  namespace: z.string().min(1).optional().describe("Namespace for isolated browser sessions."),
+  session: z.string().min(1).optional().describe("Isolated browser session name within the current conversation; defaults to default. Keep unchanged to continue in the selected tab."),
+  namespace: z.string().min(1).optional().describe("Namespace for browser sessions within the current conversation."),
   allowedDomains: z.array(z.string().min(1)).optional().describe("Allow only these domains or *.domain patterns, including redirects and page requests. Retained until changed."),
   timeoutMs: z.number().int().positive().default(120_000).describe("Maximum duration of the tool call in milliseconds."),
 };
