@@ -145,30 +145,31 @@ try {
   const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "kitesurf-verification", version: "1.0.0" } });
   assert.ok(initialized.result?.serverInfo);
   const listed = await rpc(2, "tools/list");
-  assert.ok(listed.result?.tools.some((tool: { name: string }) => tool.name === "browser_navigate"));
+  assert.ok(listed.result?.tools.some((tool: { name: string }) => tool.name === "browser_open"));
   console.log(`PASS: authenticated MCP initialize and ${listed.result.tools.length} discoverable tools.`);
   if (useBrowser) {
     browserUsed = true;
-    const navigation = await rpc(3, "tools/call", { name: "browser_navigate", arguments: { url: "https://example.com" } });
+    const navigation = await rpc(3, "tools/call", { name: "browser_open", arguments: { url: "https://example.com" } });
     assert.ok(!navigation.error && !navigation.result?.isError, "Browser navigation failed: " + JSON.stringify(navigation));
     assert.match(JSON.stringify(navigation.result), /Example Domain/);
-    const linkRef = navigation.result.structuredContent.result.elements.find((element: { href?: string }) => element.href)?.ref;
-    assert.equal(typeof linkRef, "number", "Navigation did not return a clickable link reference.");
+    const firstSnapshot = await rpc(300, "tools/call", { name: "browser_snapshot", arguments: {} });
+    const linkRef = Object.entries(firstSnapshot.result.structuredContent.result.refs as Record<string, { role: string }>).find(entry => entry[1].role === "link")?.[0];
+    assert.equal(typeof linkRef, "string", "Snapshot did not return a clickable link reference.");
     mcpSession = "";
     await rpc(4, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "kitesurf-reconnected", version: "1.0.0" } });
     const snapshot = await rpc(5, "tools/call", { name: "browser_snapshot", arguments: {} });
     assert.ok(!snapshot.error && !snapshot.result?.isError, "Snapshot after reconnect failed.");
     assert.match(JSON.stringify(snapshot.result), /Example Domain/, "MCP reconnect lost the navigated page.");
-    const click = await rpc(6, "tools/call", { name: "browser_click", arguments: { ref: linkRef } });
+    const click = await rpc(6, "tools/call", { name: "browser_click", arguments: { selector: "@" + linkRef } });
     assert.ok(!click.error && !click.result?.isError, "Click after reconnect failed: " + JSON.stringify(click));
     assert.match(JSON.stringify(click.result), /iana\.org/, "Click did not follow the original page's link.");
     console.log("PASS: live browser preserved its page and link reference across MCP reconnect and followed the link.");
-    const opened = await rpc(700, "tools/call", { name: "browser_tabs", arguments: { action: "new", url: "https://example.com" } });
+    const opened = await rpc(700, "tools/call", { name: "browser_tab_new", arguments: { url: "https://example.com" } });
     assert.ok(!opened.error && !opened.result?.isError, "Opening a tab failed");
-    const tabs = opened.result.structuredContent.result.tabs as { id: number; selected: boolean }[];
+    const tabs = opened.result.structuredContent.result.tabs as { id: string; selected: boolean }[];
     assert.equal(tabs.length, 2);
     const selected = tabs.find(tab => tab.selected)!;
-    const closed = await rpc(701, "tools/call", { name: "browser_tabs", arguments: { action: "close", id: selected.id } });
+    const closed = await rpc(701, "tools/call", { name: "browser_tab_close", arguments: { tab: selected.id } });
     assert.ok(!closed.error && !closed.result?.isError, "Closing a tab failed");
     assert.equal(closed.result.structuredContent.result.tabs.length, 1);
     const restored = await rpc(702, "tools/call", { name: "browser_snapshot", arguments: {} });
@@ -185,19 +186,25 @@ try {
         return response.result.structuredContent.result;
       }
       const started = performance.now();
-      const navigated = await tool("browser_navigate", { url });
+      await tool("browser_open", { url });
       const navigationMs = Math.round(performance.now() - started);
-      const before = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
+      const before = await tool("browser_eval", { script: expression }) as { title: string; href: string }[];
       assert.equal(before.length, 20, "Expected exactly 20 openings before scrolling");
       const beforeStatus = await tool("browser_status");
       assert.ok(!beforeStatus.network.events.some((event: { url: string }) => event.url.includes("cursor=")), "Pagination ran before scrolling");
-      const scrollStarted = performance.now();
       const click = process.argv.includes("--click");
-      const button = navigated.elements.find((element: { tag: string; text: string }) => element.tag === "button" && element.text.includes("Показать ещё"));
-      const acted = await tool(click ? "browser_click" : "browser_scroll", click ? { ref: button?.ref } : { bottom: true });
+      const snapshot = await tool("browser_snapshot");
+      const button = Object.entries(snapshot.refs as Record<string, { role: string; name: string }>).find(entry => entry[1].role === "button" && entry[1].name.includes("Показать ещё"));
+      const scrollStarted = performance.now();
+      if (click) {
+        assert.ok(button, "Load more button missing");
+        await tool("browser_click", { selector: "@" + button[0] });
+      } else {
+        const destination = Number(await tool("browser_eval", { script: "Math.max(0,document.documentElement.scrollHeight-innerHeight)" }));
+        for (let position = 0; position < destination; position += 576) await tool("browser_scroll", { direction: "down", amount: Math.min(576, destination - position) });
+      }
       const actionMs = Math.round(performance.now() - scrollStarted);
-      assert.equal(acted.elements.filter((element: { href?: string }) => /\/jobs\/vacancies\/[^/?]+-\d+/.test(element.href || "")).length, 21, "Action returned before all openings loaded");
-      const after = await tool("browser_evaluate", { expression }) as { title: string; href: string }[];
+      const after = await tool("browser_eval", { script: expression }) as { title: string; href: string }[];
       assert.equal(after.length, 21);
       assert.equal(new Set(after.map(job => job.href)).size, 21, "Expected 21 distinct jobs");
       assert.ok(before.every(job => after.some(next => next.href === job.href)), "Scrolling lost an existing job");
@@ -213,7 +220,7 @@ try {
         runtime: status.runtime, waits: status.waits, waitTimings: status.waitTimings, timings: status.timings,
       };
       writeFileSync(new URL("../.wrangler/yandex-result.json", import.meta.url), JSON.stringify(report, null, 2) + "\n");
-      console.log("PASS: live Yandex 20→21 in one action. " + JSON.stringify(report));
+      console.log("PASS: live Yandex 20→21 after settled interaction. " + JSON.stringify(report));
     }
     if (useSites) {
       const cases = [
@@ -226,12 +233,13 @@ try {
       for (const site of cases) {
         const started = performance.now();
         try {
-          const response = await rpc(id++, "tools/call", { name: "browser_navigate", arguments: { url: site.url } });
+          const response = await rpc(id++, "tools/call", { name: "browser_open", arguments: { url: site.url } });
           assert.ok(!response.error && !response.result?.isError, JSON.stringify(response));
           const snapshot = response.result.structuredContent.result;
           assert.ok(snapshot.title.includes(site.title), "Unexpected title: " + snapshot.title);
-          assert.ok(snapshot.text.length > 100, "No readable page content");
-          const selected = await rpc(id++, "tools/call", { name: "browser_evaluate", arguments: { expression: "document.querySelectorAll(" + JSON.stringify(site.selector) + ").length" } });
+          const read = await rpc(id++, "tools/call", { name: "browser_get_text", arguments: { selector: "body" } });
+          assert.ok(!read.result?.isError && read.result.structuredContent.result.length > 100, "No readable page content");
+          const selected = await rpc(id++, "tools/call", { name: "browser_eval", arguments: { script: "document.querySelectorAll(" + JSON.stringify(site.selector) + ").length" } });
           assert.ok(!selected.error && !selected.result?.isError && selected.result.structuredContent.result > 0, "Expected page elements are missing");
           const status = await rpc(id++, "tools/call", { name: "browser_status", arguments: {} });
           reports.push({ url: site.url, passed: true, elapsedMs: Math.round(performance.now() - started), title: snapshot.title, ...status.result.structuredContent.result });

@@ -37,7 +37,8 @@ async function fetcher(input: RequestInfo | URL, init?: RequestInit): Promise<Re
 function result(response: CallToolResult) {
   assert.ok(!response.isError, JSON.stringify(response));
   return response.structuredContent!.result as {
-    elements: { ref: number; tag: string; text: string; href?: string }[];
+    elements: { tag: string; text: string; href?: string }[];
+    refs: Record<string, { role: string; name: string }>;
     errors: string[];
     network: { requests: number; pending: number; events: { url: string; status: number }[] };
     wasmMemoryBytes: unknown;
@@ -54,15 +55,26 @@ const browser = createBrowserTools(async function create(url, html, network, sco
 }, fetcher);
 try {
   const started = performance.now();
-  const before = result(await browser.callTool({ name: "browser_navigate", arguments: { url } }));
+  result(await browser.callTool({ name: "browser_open", arguments: { url } }));
   const navigationMs = Math.round(performance.now() - started);
+  async function inspect() {
+    return result(await browser.callTool({ name: "browser_eval", arguments: { script: "({elements:Array.from(document.querySelectorAll('a[href]')).map(el=>({tag:'a',text:el.textContent,href:el.href}))})" } }));
+  }
+  const before = await inspect();
   const jobs = (page: typeof before) => page.elements.filter(element => /\/jobs\/vacancies\/[^/?]+-\d+/.test(element.href || ""));
   assert.equal(jobs(before).length, 20);
-  const button = before.elements.find(element => element.tag === "button" && element.text.includes("Показать ещё"));
+  const snapshot = result(await browser.callTool({ name: "browser_snapshot" }));
+  const button = Object.entries(snapshot.refs).find(entry => entry[1].role === "button" && entry[1].name.includes("Показать ещё"));
   assert.ok(button, "Load more button missing");
   const clicked = performance.now();
-  const after = result(await browser.callTool(scroll ? { name: "browser_scroll", arguments: { bottom: true } } : { name: "browser_click", arguments: { ref: button.ref } }));
+  if (scroll) {
+    const height = await browser.callTool({ name: "browser_eval", arguments: { script: "Math.max(0,document.documentElement.scrollHeight-innerHeight)" } });
+    assert.ok(!height.isError, JSON.stringify(height));
+    const destination = Number(height.structuredContent!.result);
+    for (let position = 0; position < destination; position += 576) result(await browser.callTool({ name: "browser_scroll", arguments: { direction: "down", amount: Math.min(576, destination - position) } }));
+  } else result(await browser.callTool({ name: "browser_click", arguments: { selector: "@" + button[0] } }));
   const actionMs = Math.round(performance.now() - clicked);
+  const after = await inspect();
   const status = result(await browser.callTool({ name: "browser_status" }));
   const report = { mode: replay ? "replay" : record ? "record" : "live", action: scroll ? "scroll" : "click", navigationMs, actionMs, before: jobs(before).length, after: jobs(after).length, requests: status.network.requests, pending: status.network.pending, wasmMemoryBytes: status.wasmMemoryBytes, runtime: status.runtime, waits: status.waits, waitTimings: status.waitTimings, timings: status.timings, errors: status.errors };
   console.log(JSON.stringify(report, null, 2));
@@ -77,7 +89,7 @@ try {
     await writeFile(new URL("trace.json", directory), JSON.stringify({ traceEvents, displayTimeUnit: "ms" }));
     console.log("Trace: .wrangler/browser-benchmark/trace.json (" + traceEvents.length + " events)");
   }
-  assert.equal(jobs(after).length, 21, "The action must return all 21 openings without another wait call");
+  assert.equal(jobs(after).length, 21, "The interaction must finish loading 21 openings without another wait call");
   assert.equal(new Set(jobs(after).map(job => job.href)).size, 21);
   assert.ok(jobs(before).every(job => jobs(after).some(next => next.href === job.href)));
   assert.ok(status.network.events.some(event => event.url.includes("cursor=") && event.status === 200));

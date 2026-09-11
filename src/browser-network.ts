@@ -2,6 +2,22 @@ import { CookieJar } from "tough-cookie";
 import { browserUserAgent, isTracker } from "./browser-stealth.ts";
 
 export type BrowserNetwork = ReturnType<typeof createBrowserNetwork>;
+export type BrowserNetworkPolicy = { allowedDomains?: string[]; signal?: AbortSignal };
+
+export function normalizeBrowserUrl(value: string): string {
+  if (value === "about:blank") return value;
+  const input = value.trim();
+  return browserUrl(/^[a-z][a-z\d+.-]*:/i.test(input) ? input : "https://" + input).href;
+}
+
+export function checkBrowserDomain(url: URL, domains?: string[]) {
+  if (domains === undefined) return;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (!domains.some(function matches(pattern) {
+    const domain = pattern.toLowerCase().replace(/\.$/, "");
+    return domain.startsWith("*.") ? host.endsWith(domain.slice(1)) : host === domain;
+  })) throw new Error("Domain is not allowed: " + host);
+}
 
 export function browserUrl(value: string, base?: string): URL {
   const url = new URL(value, base);
@@ -12,7 +28,7 @@ export function browserUrl(value: string, base?: string): URL {
 }
 
 /** Cookies and response bodies belong to one browser session, never the Worker environment. */
-export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new CookieJar()) {
+export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new CookieJar(), policy: BrowserNetworkPolicy = {}) {
   const controller = new AbortController();
   const events: { url: string; method: string; status: number; bytes: number; queueMs: number; transferMs: number }[] = [];
   let requests = 0;
@@ -44,10 +60,11 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
     if (active >= 6) await new Promise<void>(function queued(resolve) { waiting.push(resolve); });
     else active++;
     const queueMs = performance.now() - queued;
-    const signal = controller.signal;
+    const signal = policy.signal ? AbortSignal.any([controller.signal, policy.signal]) : controller.signal;
     try {
       for (let redirects = 0; redirects <= 20; redirects++) {
         signal.throwIfAborted();
+        checkBrowserDomain(url, policy.allowedDomains);
         if (isTracker(url.hostname)) {
           blockedRequests++;
           return { url: url.href, status: 0, body: "", headers: {}, redirected: redirects > 0, blocked: true };
@@ -83,15 +100,20 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
         const decoder = new TextDecoder();
         let length = 0;
         const reader = response.body?.getReader();
+        function abortRead() { void reader?.cancel(signal.reason).catch(function cancelled() {}); }
+        signal.addEventListener("abort", abortRead, { once: true });
         try {
+          signal.throwIfAborted();
           while (reader) {
             const { done, value } = await reader.read();
+            signal.throwIfAborted();
             if (done) break;
             length += value.byteLength;
             downloadedBytes += value.byteLength;
             chunks.push(decoder.decode(value, { stream: true }));
           }
         } finally {
+          signal.removeEventListener("abort", abortRead);
           await reader?.cancel();
         }
         chunks.push(decoder.decode());
@@ -120,12 +142,13 @@ export function createBrowserNetwork(fetcher: typeof fetch = fetch, jar = new Co
 
   return {
     download,
+    throwIfAborted() { policy.signal?.throwIfAborted(); },
     cookies(url: string) { return jar.getCookieStringSync(url, { http: false }); },
     setCookie(value: string, url: string) {
       jar.setCookieSync(value, url, { http: false, ignoreError: true });
     },
     diagnostics() { return { requests, downloadedBytes, blockedRequests, pending: active + waiting.length, events: events.slice() }; },
-    next() { controller.abort(); return createBrowserNetwork(fetcher, jar); },
+    next() { controller.abort(); return createBrowserNetwork(fetcher, jar, policy); },
     close() { controller.abort(); },
   };
 }
